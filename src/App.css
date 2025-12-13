@@ -1,0 +1,59 @@
+.app-container {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  width: 100vw;
+  background-color: var(--bg-primary);
+}
+
+.app-header {
+  height: var(--header-height);
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 var(--spacing-md);
+  background-color: var(--bg-secondary);
+}
+
+.logo {
+  font-weight: bold;
+  font-size: var(--font-size-lg);
+}
+
+.header-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-md);
+}
+
+.status-indicator {
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background-color: var(--accent-success);
+  /* Default to green */
+  box-shadow: 0 0 8px var(--accent-success);
+}
+
+.settings-btn {
+  background: none;
+  border: 1px solid var(--border-light);
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+}
+
+.settings-btn:hover {
+  background-color: var(--bg-panel);
+  color: var(--text-primary);
+}
+
+.app-main {
+  flex: 1;
+  overflow: hidden;
+  /* Scroll handled by TimelineContainer */
+  position: relative;
+}

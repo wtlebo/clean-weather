@@ -1,0 +1,102 @@
+:root {
+  /* Colors */
+  --bg-primary: #000000;
+  --bg-secondary: #111111;
+  --bg-panel: #1a1a1a;
+
+  --text-primary: #ffffff;
+  --text-secondary: #a0a0a0;
+  --text-muted: #666666;
+
+  --accent-primary: #3b82f6;
+  /* Blue */
+  --accent-danger: #ef4444;
+  /* Red */
+  --accent-success: #22c55e;
+  /* Green */
+  --accent-warning: #eab308;
+  /* Yellow */
+
+  --border-color: #333333;
+  --border-light: #444444;
+
+  /* Spacing */
+  --spacing-xs: 4px;
+  --spacing-sm: 8px;
+  --spacing-md: 16px;
+  --spacing-lg: 24px;
+  --spacing-xl: 32px;
+
+  /* Typography */
+  --font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-size-sm: 12px;
+  --font-size-md: 14px;
+  --font-size-lg: 16px;
+  --font-size-xl: 20px;
+
+  /* Layout */
+  --header-height: 60px;
+  --panel-height: 200px;
+  --hour-width: 60px;
+  /* Width of one hour in the timeline */
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  -webkit-tap-highlight-color: transparent;
+  /* Remove mobile click highlight */
+}
+
+/* Remove focus outlines from charts */
+.recharts-wrapper,
+.recharts-surface,
+.recharts-layer,
+.recharts-sector,
+.recharts-rectangle,
+.recharts-curve,
+.recharts-dot,
+path,
+g,
+rect {
+  outline: none !important;
+}
+
+.recharts-wrapper *:focus {
+  outline: none !important;
+}
+
+body {
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: var(--font-family);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  /* App handles scrolling */
+}
+
+#root {
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollbar Styling */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--bg-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-light);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
+}

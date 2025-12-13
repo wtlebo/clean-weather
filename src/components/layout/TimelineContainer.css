@@ -1,0 +1,37 @@
+.timeline-scroll-wrapper {
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    /* Handle both Horizontal and Vertical scroll here */
+    position: relative;
+    /* Hide scrollbar for cleaner look, or style it thin */
+    scrollbar-width: thin;
+    scrollbar-color: var(--border-light) var(--bg-secondary);
+    /* Ensure sticky context works */
+    overscroll-behavior: none;
+}
+
+.timeline-content {
+    position: relative;
+    /* Use min-height 100% so it fills the view, but height auto so it grows */
+    min-height: 100%;
+    height: max-content;
+    display: flex;
+    flex-direction: column;
+    row-gap: 12px;
+    /* Space between weather panels */
+    padding-bottom: 40px;
+    /* Extra space at very bottom */
+}
+
+.now-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 2px;
+    background-color: #8b0000;
+    /* Darker red */
+    z-index: 50;
+    /* Bring back to front */
+    pointer-events: none;
+}
