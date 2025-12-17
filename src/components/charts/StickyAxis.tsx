@@ -9,6 +9,7 @@ interface StickyAxisProps {
     tickFormatter?: (value: number) => string;
     tickCount?: number;
     ticks?: number[];
+    margin?: { top: number; right: number; bottom: number; left: number };
 }
 
 export const StickyAxis: React.FC<StickyAxisProps> = ({
@@ -17,7 +18,8 @@ export const StickyAxis: React.FC<StickyAxisProps> = ({
     orientation = 'left',
     tickFormatter,
     tickCount = 5,
-    ticks
+    ticks,
+    margin = { top: 5, right: 0, left: 0, bottom: 5 }
 }) => {
     // We create a dummy chart just to render the axis
     // The width needs to be enough to hold the ticks
@@ -40,7 +42,7 @@ export const StickyAxis: React.FC<StickyAxisProps> = ({
                 width={32}
                 height={height}
                 data={dummyData}
-                margin={{ top: 5, right: 0, left: 0, bottom: 5 }}
+                margin={margin}
             >
                 <YAxis
                     dataKey="value"
@@ -50,7 +52,7 @@ export const StickyAxis: React.FC<StickyAxisProps> = ({
                     tickCount={tickCount}
                     width={32}
                     tickFormatter={tickFormatter || defaultTickFormatter}
-                    interval="preserveStartEnd"
+                    interval={0} // Force show all provided ticks (let parent control density)
                     ticks={ticks}
                 />
             </AreaChart>

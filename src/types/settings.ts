@@ -11,32 +11,64 @@ export interface AppSettings {
     temp: {
         showFeelsLike: boolean;
         showDewPoint: boolean;
+        showDailyHighLow: boolean;
+    };
+    wind: {
+        showDailyHigh: boolean;
     };
     precip: {
         showHumidity: boolean;
         showAmount: boolean;
         showThunder: boolean;
+        showAccumulation: boolean;
+    };
+    tide: {
+        showHighLow: boolean;
+    };
+    marine: {
+        showChart: boolean;
+    };
+    waterTemp: {
+        showChart: boolean;
     };
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
     units: 'imperial',
-    chartOrder: [
-        { id: 'temp', label: 'Temperature', visible: true },
-        { id: 'precip', label: 'Precipitation', visible: true },
-        { id: 'wind', label: 'Wind', visible: true },
-        { id: 'sky', label: 'Sky Cover', visible: true },
-        { id: 'aqi', label: 'Air Quality', visible: false },
-        { id: 'uv', label: 'UV Index', visible: false },
-        { id: 'tide', label: 'Tides', visible: false },
-    ],
+
     temp: {
         showFeelsLike: true,
         showDewPoint: false,
+        showDailyHighLow: true,
+    },
+    wind: {
+        showDailyHigh: true,
     },
     precip: {
         showHumidity: true,
         showAmount: true,
         showThunder: true,
+        showAccumulation: true,
     },
+    tide: {
+        showHighLow: true,
+    },
+    marine: {
+        showChart: false,
+    },
+    waterTemp: {
+        showChart: true,
+    },
+    chartOrder: [
+        { id: 'temperature', visible: true, label: 'Temperature' },
+        { id: 'precipitation', visible: true, label: 'Precipitation' },
+        { id: 'wind', visible: true, label: 'Wind' },
+        { id: 'sky', visible: true, label: 'Sky Cover' },
+        { id: 'tide', visible: true, label: 'Tides' },
+        { id: 'marine', visible: false, label: 'Marine / Surf' },
+        { id: 'waterTemp', visible: false, label: 'Water Temp' },
+        { id: 'aqi', visible: false, label: 'Air Quality' },
+        { id: 'uv', visible: false, label: 'UV Index' },
+    ],
+
 };

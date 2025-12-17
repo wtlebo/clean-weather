@@ -1,6 +1,6 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Settings } from 'lucide-react';
-import { TimelineContainer } from './components/layout/TimelineContainer';
+import { TimelineContainer, type TimelineHandle } from './components/layout/TimelineContainer';
 import { TimeAxis } from './components/layout/TimeAxis';
 import { WeatherPanel } from './components/panels/WeatherPanel';
 import { TemperatureChart } from './components/charts/TemperatureChart';
@@ -8,6 +8,8 @@ import { WindChart } from './components/charts/WindChart';
 import { PrecipitationChart } from './components/charts/PrecipitationChart';
 import { SkyCoverChart } from './components/charts/SkyCoverChart';
 import { TideChart } from './components/charts/TideChart';
+import { MarineChart } from './components/charts/MarineChart';
+import { WaterTempChart } from './components/charts/WaterTempChart';
 import { StickyAxis } from './components/charts/StickyAxis';
 import { AQIChart } from './components/charts/AQIChart';
 import { UVChart } from './components/charts/UVChart';
@@ -18,6 +20,9 @@ import type { WeatherPoint } from './types/weather';
 import { fetchWeatherData } from './services/api';
 import type { LocationResult } from './services/api';
 import { LocationSearch } from './components/LocationSearch';
+import { StatusIndicator } from './components/StatusIndicator';
+import { ShareButton } from './components/ShareButton';
+import { serializeSettings, parseSettings, serializeLocation, parseLocation, mergeSettings } from './utils/url';
 import './App.css';
 
 // Configuration
@@ -30,14 +35,21 @@ function App() {
   const [hourWidth, setHourWidth] = useState(DEFAULT_HOUR_WIDTH);
 
   // Data & State
-  // Default Location: New York (or load from storage)
+  // Default Location: New York (or load from URL, then storage)
   const [currentLocation, setCurrentLocation] = useState<LocationResult>(() => {
+    // 1. Try URL
+    const params = new URLSearchParams(window.location.search);
+    const urlLoc = parseLocation(params);
+    if (urlLoc) return urlLoc;
+
+    // 2. Try Storage
     try {
       const saved = localStorage.getItem('weather_location');
       if (saved) return JSON.parse(saved);
     } catch (e) {
       console.error('Failed to load location', e);
     }
+    // 3. Default
     return {
       id: 5128581,
       name: "New York",
@@ -53,40 +65,101 @@ function App() {
   const [tideStation, setTideStation] = useState<{ name: string; distance: number; alertThreshold?: number } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
+  const [currentTime, setCurrentTime] = useState(new Date());
 
   const [settings, setSettings] = useState<AppSettings>(() => {
+    // 1. Try URL
+    const params = new URLSearchParams(window.location.search);
+    // Determine if URL actually has settings? Check for 'u' or 'charts' or 't_opt'
+    if (params.has('u') || params.has('charts') || params.has('t_opt')) {
+      return parseSettings(params);
+    }
+
+    // 2. Try Storage
     try {
       const saved = localStorage.getItem('weather_settings');
-      if (saved) return { ...DEFAULT_SETTINGS, ...JSON.parse(saved) }; // Merge to handle new keys
+      if (saved) return mergeSettings(JSON.parse(saved));
     } catch (e) {
       console.error('Failed to load settings', e);
     }
     return DEFAULT_SETTINGS;
   });
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const timelineRef = React.useRef<TimelineHandle>(null);
 
-  // Fetch Data on Location Change
+  // URL Synchronization
   useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      setError(null);
-      try {
-        const { points, tideStation } = await fetchWeatherData(
-          currentLocation.latitude,
-          currentLocation.longitude,
-          currentLocation.timezone
-        );
-        setWeatherData(points);
-        setTideStation(tideStation);
-      } catch (err) {
-        console.error(err);
-        setError("Failed to load weather data");
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
+    // Debounce or just update? replaceState is cheap-ish.
+    const params = new URLSearchParams();
+
+    // Add Loc Params
+    const locParams = serializeLocation(currentLocation);
+    locParams.forEach((v, k) => params.set(k, v));
+
+    // Add Settings Params
+    const setParams = serializeSettings(settings);
+    setParams.forEach((v, k) => params.set(k, v));
+
+    const newUrl = `${window.location.pathname}?${params.toString()}`;
+
+    // Update URL without reload
+    window.history.replaceState({}, '', newUrl);
+
+  }, [currentLocation, settings]);
+
+  // Update Page Title
+  useEffect(() => {
+    document.title = `${currentLocation.name} | Weather Plot`;
+  }, [currentLocation.name]);
+
+  // Fetch Data
+
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const { points, tideStation } = await fetchWeatherData(
+        currentLocation.latitude,
+        currentLocation.longitude
+      );
+      setWeatherData(points);
+      setTideStation(tideStation);
+      setLastFetchTime(new Date());
+    } catch (err) {
+      console.error(err);
+      setError("Failed to load weather data");
+    } finally {
+      setLoading(false);
+    }
   }, [currentLocation]);
+
+  // Initial Fetch & Location Change
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  // Clock for "Now" line - Updates every minute
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setCurrentTime(new Date());
+    }, 60000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // Auto-Refresh Data if stale per user request (> 60 mins age)
+  useEffect(() => {
+    if (!lastFetchTime) return;
+    const interval = setInterval(() => {
+      const diffMinutes = (new Date().getTime() - lastFetchTime.getTime()) / (1000 * 60);
+      if (diffMinutes >= 60) {
+        console.log('Auto-refreshing weather data...');
+        loadData();
+      }
+    }, 60000); // Check every minute
+    return () => clearInterval(interval);
+  }, [lastFetchTime, loadData]);
 
   // Persistence Effects
   useEffect(() => {
@@ -130,6 +203,9 @@ function App() {
       let gust = d.windGust;
       let precip = d.precipitationAmount;
       let tide = d.tideHeight;
+      let wave = d.waveHeight;
+      let swell = d.swellHeight;
+      let waterTemp = d.waterTemperature;
 
       if (isMetric) {
         // F -> C
@@ -141,6 +217,7 @@ function App() {
         if (gust) gust = gust * 0.44704;
         // mm -> mm (No change)
         // Tide Metric (already meters)
+        // Wave/Swell Metric (already meters)
       } else {
         // Imperial
         // F -> F
@@ -149,6 +226,9 @@ function App() {
         precip = precip / 25.4;
         // Meters -> Feet
         if (tide !== null) tide = tide * 3.28084;
+        if (wave !== null) wave = wave * 3.28084;
+        if (swell !== null) swell = swell * 3.28084;
+        if (waterTemp !== null) waterTemp = (waterTemp * 9 / 5) + 32;
       }
 
       // Calculate Visual Intensity (NWS Standards) based on Inches
@@ -176,33 +256,114 @@ function App() {
         windGust: gust,
         precipitationAmount: precip,
         precipIntensity,
-        tideHeight: tide
+        tideHeight: tide,
+        waveHeight: wave,
+        swellHeight: swell,
+        waterTemperature: waterTemp
       };
     });
+    // Add settings.units dependency to ensure re-calculation
   }, [weatherData, settings.units]);
 
   // 2. Derive Domains from Processed Data
-  const tempDomain = useMemo(() => {
+  // 2. Derive Domains & Ticks (Unified to ensure snapping)
+  // Temperature
+  const { tempDomain, tempTicks } = useMemo(() => {
     const temps = processedData.map(d => d.temperature);
     const feels = settings.temp.showFeelsLike ? processedData.map(d => d.feelsLike) : [];
-    const minVal = Math.min(...temps, ...feels);
-    const maxVal = Math.max(...temps, ...feels);
-    return [Math.floor(minVal - 5), Math.ceil(maxVal + 5)] as [number, number];
-  }, [processedData, settings.temp.showFeelsLike]);
 
-  const windDomain = useMemo(() => {
+    let minVal = Math.min(...temps, ...feels);
+    let maxVal = Math.max(...temps, ...feels);
+
+    // Default fallback if no data
+    if (!isFinite(minVal) || !isFinite(maxVal)) {
+      minVal = 0;
+      maxVal = 10;
+    }
+
+    // Determine target range with some visual padding
+    // We want approximately 5 ticks.
+    // Range = Max - Min. 
+    // Rough Step = Range / 4.
+    const rawRange = maxVal - minVal;
+    // Ensure minimum range to avoid divide by zero or single tick
+    const minRange = settings.units === 'metric' ? 5 : 10;
+    const range = Math.max(rawRange, minRange);
+
+    // Calculate rough step
+    const targetTicks = 5;
+    const roughStep = range / (targetTicks - 1);
+
+    // Snap step to nice numbers: 1, 2, 5, 10, 20
+    const possibleSteps = settings.units === 'metric'
+      ? [1, 2, 5, 10, 20]
+      : [2, 5, 10, 20, 50];
+
+    const step = possibleSteps.find(s => s >= roughStep) || possibleSteps[possibleSteps.length - 1];
+
+    // Calculate Domain Snapped to Step
+    // We add one step of "padding" to the raw min/max before snapping to ensure the data doesn't touch the edge
+    const snapMin = Math.floor((minVal - (step * 0.5)) / step) * step;
+    const snapMax = Math.ceil((maxVal + (step * 0.5)) / step) * step; // Ensure we go ABOVE the max
+
+    const ticks = [];
+    for (let i = snapMin; i <= snapMax; i += step) {
+      ticks.push(i);
+    }
+
+    return {
+      tempDomain: [snapMin, snapMax] as [number, number],
+      tempTicks: ticks
+    };
+  }, [processedData, settings.temp.showFeelsLike, settings.units]);
+
+  const { windDomain, windTicks } = useMemo(() => {
     const speeds = processedData.map(d => Math.max(d.windSpeed, d.windGust || 0));
-    return [0, Math.ceil(Math.max(...speeds) + (settings.units === 'metric' ? 2 : 5))] as [number, number];
+    const maxVal = Math.max(...speeds, 0);
+
+    // Determine target range
+    const minRange = settings.units === 'metric' ? 5 : 10;
+    const range = Math.max(maxVal, minRange);
+
+    // Calculate rough step
+    const targetTicks = 5;
+    const roughStep = range / (targetTicks - 1);
+
+    // Snap step to nice numbers
+    const possibleSteps = settings.units === 'metric'
+      ? [1, 2, 5, 10, 20]
+      : [2, 5, 10, 20, 50];
+
+    const step = possibleSteps.find(s => s >= roughStep) || possibleSteps[possibleSteps.length - 1];
+
+    // Calculate Domain Snapped to Step
+    // Add small buffer so max value doesn't sit exactly on the top line if possible
+    const snapMax = Math.ceil((maxVal + (step * 0.25)) / step) * step;
+
+    const ticks = [];
+    for (let i = 0; i <= snapMax; i += step) {
+      ticks.push(i);
+    }
+
+    return {
+      windDomain: [0, snapMax] as [number, number],
+      windTicks: ticks
+    };
   }, [processedData, settings.units]);
 
   const tideDomain = useMemo(() => {
     const values = processedData.map(d => d.tideHeight ?? 0);
-    const maxAbs = Math.ceil(Math.max(...values.map(v => Math.abs(v))) * 10) / 10;
-    const limit = Math.max(settings.units === 'metric' ? 1 : 3, maxAbs);
-    return [-limit, limit] as [number, number];
+    if (values.length === 0) return [0, 1] as [number, number];
+
+    const minVal = Math.min(...values);
+    const maxVal = Math.max(...values);
+    // Increased buffer to prevent text clipping (especially for High/Low markers)
+    const buffer = settings.units === 'metric' ? 1.0 : 4;
+
+    return [Math.floor(minVal - buffer), Math.ceil(maxVal + buffer)] as [number, number];
   }, [processedData, settings.units]);
 
-  // 3. Generate Ticks
+  // General Tick Helper
   const getLinearTicks = (min: number, max: number, step: number) => {
     const ticks = [];
     const start = Math.ceil(min / step) * step;
@@ -212,12 +373,40 @@ function App() {
     return ticks;
   };
 
-  const tempTicks = useMemo(() => getLinearTicks(tempDomain[0], tempDomain[1], settings.units === 'metric' ? 5 : 10), [tempDomain, settings.units]);
-  const windTicks = useMemo(() => getLinearTicks(windDomain[0], windDomain[1], settings.units === 'metric' ? 5 : 5), [windDomain, settings.units]);
+
   const precipTicks = [0, 0.25, 0.5, 0.75, 1];
   const tideTicks = useMemo(() => {
     const range = tideDomain[1] - tideDomain[0];
-    const step = range > (settings.units === 'metric' ? 4 : 12) ? (settings.units === 'metric' ? 1 : 2) : (settings.units === 'metric' ? 0.5 : 1);
+    // Dynamic step calculation to target ~4-5 ticks for the small 90px height
+    // If range is large (e.g. 18ft), step should be ~4 or 5.
+    // If range is small (e.g. 3m), step should be ~0.5 or 1.
+
+    let targetTickCount = 5;
+    let roughStep = range / targetTickCount;
+
+    // Normalize roughStep to nice values (1, 2, 5, 10, or 0.5, 0.25)
+    let step = 1;
+    if (settings.units === 'metric') {
+      if (roughStep > 1.5) step = 2;
+      else if (roughStep > 0.8) step = 1;
+      else step = 0.5;
+    } else {
+      if (roughStep > 8) step = 10;
+      else if (roughStep > 4) step = 5;
+      else if (roughStep > 2) step = 2; // e.g. 18 / 5 = 3.6 -> 2 (might be too dense? 18/2=9 ticks. Too many)
+      // Wait, if 18ft range. Step 2 => 9 ticks. Too crowded for 90px.
+      // If rough step is 3.6, we should probably go to 5.
+      // Let's be deeper:
+      else step = 2;
+
+      if (roughStep > 3.5) step = 5; // Preference for 5 over 4
+    }
+
+    // Ensure we don't have too many
+    if (range / step > 7) {
+      step = step * 2; // Force reduce density
+    }
+
     return getLinearTicks(tideDomain[0], tideDomain[1], step);
   }, [tideDomain, settings.units]);
 
@@ -226,14 +415,14 @@ function App() {
     if (processedData.length === 0) return START_OFFSET;
 
     // Find the fractional index corresponding to "now"
-    const now = new Date();
+    const now = currentTime; // Use dynamic currentTime state
     const startTime = processedData[0].timestamp; // Local time object
     const diffHours = (now.getTime() - startTime.getTime()) / (1000 * 60 * 60);
 
     // Clamp to valid range
     const index = Math.max(0, Math.min(processedData.length - 1, diffHours));
     return Math.round(index); // Round to match integer index for Recharts
-  }, [processedData]);
+  }, [processedData, currentTime]);
 
   // 4. Labels & Tooltip
   const unitLabels = {
@@ -317,6 +506,9 @@ function App() {
         return <div style={boxStyle}><p style={{ color: '#aecbfa', margin: 0 }}>Cover: {Math.round(data.cloudCover * 100)}%</p></div>;
       case 'tide':
         return <div style={boxStyle}><p style={{ color: '#fff', margin: 0 }}>Tide: {data.tideHeight.toFixed(2)}{unitLabels.tide}</p></div>;
+
+      case 'waterTemp':
+        return <div style={boxStyle}><p style={{ color: '#fff', margin: 0 }}>Water: {data.waterTemperature?.toFixed(1)}{unitLabels.temp}</p></div>;
       default: return null;
     }
   };
@@ -324,10 +516,10 @@ function App() {
   // Render Charts
   const renderChart = (id: string) => {
     switch (id) {
-      case 'temp':
+      case 'temperature':
         return (
           <WeatherPanel
-            key="temp"
+            key="temperature"
             title={
               <span>
                 Temperature
@@ -336,7 +528,7 @@ function App() {
               </span>
             }
             height={commonHeight}
-            axis={<StickyAxis domain={tempDomain} ticks={tempTicks} height={commonHeight} />}
+            axis={<StickyAxis domain={tempDomain} ticks={tempTicks} height={commonHeight} margin={{ top: 20, right: 0, left: 0, bottom: 20 }} />}
             tooltip={selectedData ? getTooltipContent('temp', selectedData) : null}
             tooltipLeft={tooltipLeft}
           >
@@ -350,13 +542,16 @@ function App() {
               ticks={tempTicks}
               showFeelsLike={settings.temp.showFeelsLike}
               showDewPoint={settings.temp.showDewPoint}
+              showDailyHighLow={settings.temp.showDailyHighLow}
+              units={settings.units}
+              timezone={currentLocation.timezone}
             />
           </WeatherPanel>
         );
-      case 'precip':
+      case 'precipitation':
         return (
           <WeatherPanel
-            key="precip"
+            key="precipitation"
             title={
               <span>
                 <span style={{ color: '#ab47bc' }}>Precipitation Chance</span>
@@ -380,7 +575,9 @@ function App() {
               showHumidity={settings.precip.showHumidity}
               showAmount={settings.precip.showAmount}
               showThunder={settings.precip.showThunder}
+              showAccumulation={settings.precip.showAccumulation}
               nowIndex={nowIndex}
+              units={settings.units}
             />
           </WeatherPanel >
         );
@@ -395,7 +592,7 @@ function App() {
               </span>
             }
             height={commonHeight}
-            axis={<StickyAxis domain={windDomain} height={commonHeight} ticks={windTicks} />}
+            axis={<StickyAxis domain={windDomain} height={commonHeight} ticks={windTicks} margin={{ top: 20, right: 0, left: 0, bottom: 5 }} />}
             tooltip={selectedData ? getTooltipContent('wind', selectedData) : null}
             tooltipLeft={tooltipLeft}
           >
@@ -407,6 +604,9 @@ function App() {
               domain={windDomain}
               ticks={windTicks}
               nowIndex={nowIndex}
+              showDailyHigh={settings.wind.showDailyHigh}
+              timezone={currentLocation.timezone}
+              units={settings.units}
             />
           </WeatherPanel>
         );
@@ -455,6 +655,74 @@ function App() {
               domain={tideDomain}
               ticks={tideTicks}
               nowIndex={nowIndex}
+              alertThreshold={
+                tideStation?.alertThreshold !== undefined
+                  ? (settings.units === 'metric' ? tideStation.alertThreshold : tideStation.alertThreshold * 3.28084)
+                  : undefined
+              }
+              showHighLow={settings.tide?.showHighLow}
+            />
+          </WeatherPanel>
+        );
+      case 'marine':
+        const displayMaxWave = Math.max(...processedData.map(d => d.waveHeight || 0));
+        const marineDomain: [number, number] = [0, Math.ceil((displayMaxWave || 10) * 1.2)];
+
+        const marineUnit = settings.units === 'imperial' ? 'ft' : 'm';
+
+        return (
+          <WeatherPanel
+            key="marine"
+            title={
+              <span>
+                <span style={{ color: '#006994' }}>Wave</span> & <span style={{ color: '#9c27b0' }}>Swell</span> Height
+                {' '}({marineUnit})
+              </span>
+            }
+            height={130}
+            axis={<StickyAxis domain={marineDomain} height={130} />}
+            tooltip={selectedData ? getTooltipContent('marine', selectedData) : null}
+            tooltipLeft={tooltipLeft}
+          >
+            <MarineChart
+              data={processedData}
+              width={totalWidth}
+              height={130}
+              syncId={syncId}
+              nowIndex={nowIndex}
+              units={settings.units}
+            />
+          </WeatherPanel>
+        );
+      case 'waterTemp':
+        const wTemps = processedData.map(d => d.waterTemperature).filter(t => t !== null) as number[];
+        const minWT = Math.min(...wTemps);
+        const maxWT = Math.max(...wTemps);
+        const bufferWT = 2;
+        // Nice round domain
+        const wDomain: [number, number] = [
+          Number.isFinite(minWT) ? Math.floor((minWT - bufferWT) / 2) * 2 : 0,
+          Number.isFinite(maxWT) ? Math.ceil((maxWT + bufferWT) / 2) * 2 : 20
+        ];
+        const wTicks = getLinearTicks(wDomain[0], wDomain[1], 2);
+
+        return (
+          <WeatherPanel
+            key="waterTemp"
+            title={`Water Temp (${unitLabels.temp})`}
+            height={commonHeight}
+            axis={<StickyAxis domain={wDomain} height={commonHeight} ticks={wTicks} />}
+            tooltip={selectedData ? getTooltipContent('waterTemp', selectedData) : null}
+            tooltipLeft={tooltipLeft}
+          >
+            <WaterTempChart
+              data={processedData}
+              width={totalWidth}
+              height={commonHeight}
+              syncId={syncId}
+              nowIndex={nowIndex}
+              domain={wDomain}
+              ticks={wTicks}
             />
           </WeatherPanel>
         );
@@ -505,15 +773,28 @@ function App() {
   return (
     <div className="app-container" onWheel={handleWheel}>
       <header className="app-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
-          <div className="logo">Clean Weather</div>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div
+            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+            onClick={() => timelineRef.current?.scrollToNow()}
+          >
+            <img src="/weather-plot-favicon.svg" alt="Weather Plot Logo" style={{ height: '32px', width: '32px' }} />
+            <h1 style={{ fontSize: '1.2rem', fontWeight: 600, margin: 0, color: '#fff' }}>Weather Plot</h1>
+          </div>
+          <div style={{ width: '1px', height: '24px', backgroundColor: '#333' }}></div>
           <LocationSearch
             currentLocationName={currentLocation.name}
             onLocationSelect={setCurrentLocation}
           />
         </div>
         <div className="header-controls">
-          <div className="status-indicator" title="Data Status"></div>
+          <StatusIndicator
+            lastFetchTime={lastFetchTime}
+            currentTime={currentTime}
+            onRefresh={loadData}
+            isLoading={loading}
+          />
+          <ShareButton />
           <button
             className="icon-button"
             onClick={() => setIsSettingsOpen(true)}
@@ -551,6 +832,7 @@ function App() {
       {!loading && !error && (
         <main className="app-main">
           <TimelineContainer
+            ref={timelineRef}
             hours={weatherData.length > 0 ? weatherData.length : HOURS}
             hourWidth={hourWidth}
             startHourOffset={START_OFFSET}
@@ -565,6 +847,7 @@ function App() {
               startHourOffset={START_OFFSET}
               data={processedData}
               customStartTime={processedData.length > 0 ? processedData[0].timestamp : undefined}
+              timezone={currentLocation.timezone}
             />
 
             {/* Panels */}

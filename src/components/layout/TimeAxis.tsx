@@ -1,5 +1,5 @@
 import React from 'react';
-import { addHours, format, startOfHour } from 'date-fns';
+import { addHours, startOfHour } from 'date-fns';
 import './TimeAxis.css';
 
 import type { WeatherPoint } from '../../types/weather';
@@ -11,6 +11,7 @@ interface TimeAxisProps {
     data?: WeatherPoint[]; // Optional: Use real solar data if available
     customStartTime?: Date; // Optional: Force a specific start time (e.g. from data)
     axisWidth?: number; // Width of the sticky axis column to align with
+    timezone?: string; // Target timezone for display
 }
 
 export const TimeAxis: React.FC<TimeAxisProps> = ({
@@ -19,8 +20,16 @@ export const TimeAxis: React.FC<TimeAxisProps> = ({
     startHourOffset = 120,
     data,
     customStartTime,
-    axisWidth = 32
+    axisWidth = 32,
+    timezone = 'UTC'
 }) => {
+    // We work with "Ticks" which are just hour offsets from the start time.
+    // The "Time" rendered should be formatted in the target timezone.
+
+    // Start Time is assumed to be a generic UTC-ish anchor coming from the API (which we normalized to UTC)
+    // or the previous local logic.
+    // If we passed a UTC Date as customStartTime, we can just increment ticks.
+
     const now = startOfHour(new Date());
     const startTime = customStartTime ? customStartTime : addHours(now, -startHourOffset);
 
@@ -33,25 +42,57 @@ export const TimeAxis: React.FC<TimeAxisProps> = ({
         });
     }
 
+    const dateFormatter = new Intl.DateTimeFormat('en-US', {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        timeZone: timezone
+    });
+
+    const hourFormatter = new Intl.DateTimeFormat('en-US', {
+        hour: 'numeric',
+        hour12: true,
+        timeZone: timezone
+    });
+
+    // Helper to get integer hour (0-23) in the target timezone for logic
+    const getTargetHour = (date: Date) => {
+        const parts = new Intl.DateTimeFormat('en-US', {
+            hour: 'numeric',
+            hour12: false,
+            timeZone: timezone
+        }).formatToParts(date);
+        const h = parts.find(p => p.type === 'hour')?.value;
+        return h ? parseInt(h) === 24 ? 0 : parseInt(h) : 0;
+    };
+
     const ticks = Array.from({ length: hours }, (_, i) => {
+        // Physical Time (UTC/Real)
         const time = addHours(startTime, i);
-        const hour = time.getHours();
-        const isMidnight = hour === 0;
-        const isNoon = hour === 12;
-        const showLabel = hour % 3 === 0;
+
+        // Logical Time (Target Timezone)
+        const targetHour = getTargetHour(time);
+
+        const isMidnight = targetHour === 0;
+        const isNoon = targetHour === 12; // Unused but kept for parity?
+        const showLabel = targetHour % 3 === 0;
 
         // Use real data if available, fall back to heuristic
         let isDaylight = false;
         if (data) {
-            // Check lookup
-            isDaylight = dayMap.get(time.getTime()) ?? (hour >= 6 && hour < 18);
+            // Check lookup (Map uses getTime which is timezone agnostic, good)
+            isDaylight = dayMap.get(time.getTime()) ?? (targetHour >= 6 && targetHour < 18);
         } else {
-            // Simple daylight heuristic fallback
-            isDaylight = hour >= 6 && hour < 18;
+            // Heuristic based on target timezone hour
+            isDaylight = targetHour >= 6 && targetHour < 18;
         }
 
-        // Label formatting: Just the hour number "12", "3", "6"
-        const label = format(time, 'h');
+        // Label formatting: "12", "3", "6" (from Intl)
+        // Intl returns "12 PM", "3 AM". We want just number usually? 
+        // Original was "12", "3". Let's parse or use simple numeric?
+        // format(time, 'h') -> '12'.
+        // Let's strip AM/PM from Intl if we want to match style.
+        let label = hourFormatter.format(time).replace(/ (AM|PM)/, '');
 
         return {
             time,
@@ -59,7 +100,7 @@ export const TimeAxis: React.FC<TimeAxisProps> = ({
             isNoon,
             isDaylight,
             label,
-            dayLabel: format(time, 'EEE, MMM d'),
+            dayLabel: dateFormatter.format(time),
             showLabel
         };
     });

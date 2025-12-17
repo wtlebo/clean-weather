@@ -47,7 +47,7 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ currentLocationN
     };
 
     return (
-        <div ref={wrapperRef} style={{ position: 'relative', zIndex: 9999 }}>
+        <div ref={wrapperRef} style={{ position: 'relative', zIndex: 900 }}>
             {isOpen ? (
                 <div style={{ position: 'relative' }}>
                     <div style={{ display: 'flex', alignItems: 'center', background: '#333', borderRadius: '4px', padding: '4px 8px' }}>
@@ -63,7 +63,7 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ currentLocationN
                                 color: 'white',
                                 marginLeft: '8px',
                                 outline: 'none',
-                                fontSize: '0.9rem',
+                                fontSize: '0.75rem', // Reduced from 0.9rem (approx 83%, adjusted to look right)
                                 width: '200px'
                             }}
                         />
@@ -109,20 +109,21 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ currentLocationN
                     )}
                 </div>
             ) : (
-                <h1
+                <div
                     onClick={() => setIsOpen(true)}
                     style={{
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
                         gap: '6px',
-                        margin: 0
-                        // Reuse existing h1 styles effectively by just rendering h1
+                        margin: 0,
+                        fontSize: '1rem', // Implicitly, was inheriting h1 (2em) or similar. Let's make it explicit and smaller.
+                        fontWeight: 500   // Matching the look, but smaller
                     }}
                 >
                     {currentLocationName}
-                    <Search size={14} color="#555" style={{ opacity: 0.5 }} />
-                </h1>
+                    <Search size={12} color="#555" style={{ opacity: 0.5 }} />
+                </div>
             )}
         </div>
     );

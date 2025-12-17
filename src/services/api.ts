@@ -1,9 +1,10 @@
 import type { WeatherPoint } from '../types/weather';
-import { fetchTidePredictions, findNearestStation, fetchStationDatums } from './noaa';
+import { fetchTidePredictions, findNearestStations, fetchStationDatums } from './noaa';
 
 const GEOCODING_API = 'https://geocoding-api.open-meteo.com/v1/search';
 const WEATHER_API = 'https://api.open-meteo.com/v1/forecast';
 const AQI_API = 'https://air-quality-api.open-meteo.com/v1/air-quality';
+const MARINE_API = 'https://marine-api.open-meteo.com/v1/marine';
 
 export interface LocationResult {
     id: number;
@@ -46,11 +47,13 @@ export const searchLocations = async (query: string): Promise<LocationResult[]> 
     }
 };
 
-export const fetchWeatherData = async (lat: number, lon: number, timezone: string): Promise<WeatherResult> => {
+
+
+export const fetchWeatherData = async (lat: number, lon: number): Promise<WeatherResult> => {
     const params = new URLSearchParams({
         latitude: lat.toString(),
         longitude: lon.toString(),
-        timezone: timezone,
+        timezone: 'GMT', // Fetch in UTC to ensure continuous timeline
         past_days: '5',
         forecast_days: '10',
         temperature_unit: 'fahrenheit',
@@ -79,54 +82,85 @@ export const fetchWeatherData = async (lat: number, lon: number, timezone: strin
     const aqiParams = new URLSearchParams({
         latitude: lat.toString(),
         longitude: lon.toString(),
-        timezone: timezone,
+        timezone: 'GMT', // Match Weather Timezone
         past_days: '5',
-        forecast_days: '5', // Limit for Free AQI API
+        forecast_days: '5',
         hourly: 'us_aqi'
     });
 
+    // Marine API params
+    const marineParams = new URLSearchParams({
+        latitude: lat.toString(),
+        longitude: lon.toString(),
+        timezone: 'GMT',
+        past_days: '5',
+        forecast_days: '10',
+        hourly: [
+            'wave_height',
+            'wave_period',
+            'swell_wave_height',
+            'swell_wave_period',
+            'swell_wave_direction',
+            'sea_surface_temperature'
+        ].join(',')
+    });
+
     try {
-        const [weatherRes, aqiRes] = await Promise.all([
+        const [weatherRes, aqiRes, marineRes] = await Promise.all([
             fetch(`${WEATHER_API}?${params}`),
-            fetch(`${AQI_API}?${aqiParams}`)
+            fetch(`${AQI_API}?${aqiParams}`),
+            fetch(`${MARINE_API}?${marineParams}`)
         ]);
 
         if (!weatherRes.ok) throw new Error('Weather API Error');
 
         const weatherData = await weatherRes.json();
         const aqiData = aqiRes.ok ? await aqiRes.json() : { hourly: { us_aqi: [] } };
+        // Marine might 404 or return empty if on land
+        const marineData = marineRes.ok ? await marineRes.json() : { hourly: {} };
 
         // NOAA Tide Integration
         let tideStation: { name: string; distance: number; alertThreshold?: number; } | null = null;
         let tidePredictions: any[] = [];
         try {
-            const station = await findNearestStation(lat, lon);
-            if (station) {
-                tideStation = { name: station.name, distance: station.distance || 0 };
-                // Fetch for complete range: 5 days past + 10 days future = 15 days
-                const startDate = new Date();
-                startDate.setDate(startDate.getDate() - 5);
-                const endDate = new Date();
-                endDate.setDate(endDate.getDate() + 10);
+            // Get top 3 nearest stations to handle cases where the closest one has no data (e.g. Santa Ana River)
+            const stations = await findNearestStations(lat, lon, 3);
 
-                // Parallel fetch predictions and datums
-                const [preds, datums] = await Promise.all([
-                    fetchTidePredictions(station.id, startDate, endDate),
-                    fetchStationDatums(station.id)
-                ]);
+            for (const station of stations) {
+                try {
+                    // Fetch for complete range: 5 days past + 10 days future = 15 days
+                    const startDate = new Date();
+                    startDate.setDate(startDate.getDate() - 5);
+                    const endDate = new Date();
+                    endDate.setDate(endDate.getDate() + 10);
 
-                tidePredictions = preds;
+                    // Parallel fetch predictions and datums
+                    const [preds, datums] = await Promise.all([
+                        fetchTidePredictions(station.id, startDate, endDate),
+                        fetchStationDatums(station.id)
+                    ]);
 
-                if (datums) {
-                    // Alert Threshold: HAT (relative to MSL) - 0.5ft buffer
-                    tideStation.alertThreshold = (datums.HAT - datums.MSL) - 0.5;
+                    if (preds && preds.length > 0) {
+                        // Success!
+                        tideStation = { name: station.name, distance: station.distance || 0 };
+                        tidePredictions = preds;
+
+                        if (datums) {
+                            const hatRelMllw = datums.HAT - datums.MLLW;
+                            const buffer = hatRelMllw / 12;
+                            tideStation.alertThreshold = hatRelMllw - buffer;
+                        }
+                        break; // Stop looking
+                    }
+                } catch (innerErr) {
+                    console.warn(`Failed to fetch tides for ${station.name} (${station.id}), trying next...`, innerErr);
                 }
             }
         } catch (err) {
             console.error('NOAA Tide Error:', err);
         }
 
-        const points = normalizeData(weatherData, aqiData, tidePredictions);
+        const points = normalizeData(weatherData, aqiData, marineData, tidePredictions);
         return { points, tideStation };
 
     } catch (error) {
@@ -135,10 +169,10 @@ export const fetchWeatherData = async (lat: number, lon: number, timezone: strin
     }
 };
 
-const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, tidePredictions: any[]): WeatherPoint[] => {
+const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, marine: OpenMeteoResponse, tidePredictions: any[]): WeatherPoint[] => {
     const hourly = weather.hourly;
     const us_aqi = aqi.hourly?.us_aqi || [];
-    const utcOffset = weather.utc_offset_seconds || 0;
+    const marine_hourly = marine.hourly || {};
 
     // Map tides to Map<timestamp_ms, value> for easier lookup
     // NOAA returns GMT timestamps, so we parse them as UTC.
@@ -152,16 +186,12 @@ const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, tideP
     });
 
     return hourly.time.map((t, i) => {
-        // 't' is Local Time string i.e. "2023-12-13T10:00"
-        // To find the actual UTC instant, we treat 't' as if it were UTC, then subtract the offset.
-        // Example: t="10:00", Offset=-5h. Real UTC is 15:00.
-        // new Date("10:00Z").getTime() -> 10:00 UTC epoch.
-        // 10:00 UTC - (-5h) = 15:00 UTC. Correct.
-        const localAsUtc = new Date(t + 'Z').getTime();
-        const trueUtcMs = localAsUtc - (utcOffset * 1000);
+        // t is UTC string "YYYY-MM-DDTHH:mm" because we requested &timezone=GMT
+        const timestamp = new Date(t + 'Z');
+        const timeMs = timestamp.getTime();
 
         // Lookup tide in Map
-        const tideVal = tideMap.get(trueUtcMs) ?? null;
+        const tideVal = tideMap.get(timeMs) ?? null;
 
         // Weather Code Interpretation
         const wc = Number(hourly.weather_code[i]);
@@ -194,8 +224,24 @@ const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, tideP
             else if ((rain + showers) > 0) precipitationType = 'rain';
         }
 
+        // Marine Data (Optional / Nullable)
+        // Open-Meteo uses meters for wave height by default, we need to convert if using imperial?
+        // Wait, app handles conversion? AppSettings has units. The data stored in WeatherPoint is usually metric (API native) or converted?
+        // fetchWeatherData params: temperature_unit: 'fahrenheit', precipitation_unit: 'mm'.
+        // So temp is F, precip is mm.
+        // Marine API defaults to meters.
+        // Let's store raw meters and convert in UI, OR convert here if we want consistent units.
+        // For simplicity, let's assume we want meters in raw data (like tideHeight) and convert in component.
+
+        const waveHeight = marine_hourly.wave_height?.[i];
+        const wavePeriod = marine_hourly.wave_period?.[i];
+        const swellHeight = marine_hourly.swell_wave_height?.[i];
+        const swellPeriod = marine_hourly.swell_wave_period?.[i];
+        const swellDirection = marine_hourly.swell_wave_direction?.[i];
+        const waterTemp = marine_hourly.sea_surface_temperature?.[i];
+
         return {
-            timestamp: new Date(t), // Keep strictly local time for display (compatible with how App renders X-Axis)
+            timestamp, // True UTC Date object
             temperature: Number(hourly.temperature_2m[i]),
             feelsLike: Number(hourly.apparent_temperature[i]),
             precipitationProbability: Number(hourly.precipitation_probability[i]) / 100, // API is 0-100, we want 0-1
@@ -213,7 +259,15 @@ const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, tideP
             tideHeight: tideVal !== undefined && tideVal !== null ? Number(tideVal) : null,
             isDay,
             condition,
-            humidity_raw: Number(hourly.relative_humidity_2m[i])
+            humidity_raw: Number(hourly.relative_humidity_2m[i]),
+
+            // Marine
+            waveHeight: waveHeight !== undefined && waveHeight !== null ? Number(waveHeight) : null,
+            wavePeriod: wavePeriod !== undefined && wavePeriod !== null ? Number(wavePeriod) : null,
+            swellHeight: swellHeight !== undefined && swellHeight !== null ? Number(swellHeight) : null,
+            swellPeriod: swellPeriod !== undefined && swellPeriod !== null ? Number(swellPeriod) : null,
+            swellDirection: swellDirection !== undefined && swellDirection !== null ? Number(swellDirection) : null,
+            waterTemperature: waterTemp !== undefined && waterTemp !== null ? Number(waterTemp) : null,
         } as unknown as WeatherPoint;
     });
 };

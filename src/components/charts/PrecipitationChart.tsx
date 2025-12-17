@@ -1,5 +1,5 @@
 import React from 'react';
-import { ComposedChart, Line, Bar, Cell, Area, YAxis, XAxis, CartesianGrid, ReferenceLine } from 'recharts';
+import { ComposedChart, Line, Bar, Cell, Area, YAxis, XAxis, CartesianGrid, ReferenceLine, ReferenceArea } from 'recharts';
 import type { WeatherPoint } from '../../types/weather';
 
 interface PrecipitationChartProps {
@@ -12,17 +12,68 @@ interface PrecipitationChartProps {
     showHumidity?: boolean;
     showAmount?: boolean;
     showThunder?: boolean;
+    showAccumulation?: boolean;
+    units?: 'imperial' | 'metric';
 }
 
 export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
     data, width, height, syncId, nowIndex, ticks,
-    showHumidity = true, showAmount = true, showThunder = true
-}) => {
+    showHumidity = true, showAmount = true, showThunder = true, showAccumulation = true, units = 'imperial'
+}: PrecipitationChartProps) => {
     // augment data for thunder indicator
     const chartData = data.map(d => ({
         ...d,
         thunderIndicator: d.thunderProbability > 0 ? 1 : 0
     }));
+
+    // Calculate Precipitation Blocks
+    const stormBlocks = React.useMemo<{ startIndex: number, endIndex: number, total: number, type: string }[]>(() => {
+        if (!showAccumulation || !showAmount) return []; // Skip if disabled OR amount bars hidden
+
+        const blocks: { startIndex: number, endIndex: number, total: number, type: string }[] = [];
+        let currentBlock: { startIndex: number, total: number, type: string } | null = null;
+        const MIN_HOURS = 5;
+
+        for (let i = 0; i < data.length; i++) {
+            const d = data[i];
+            const hasPrecip = d.precipitationAmount > 0;
+            // Simplified type check matching previous logic
+            const currentType = d.precipitationType === 'snow' ? 'Snow' : 'Rain';
+
+            if (hasPrecip) {
+                if (!currentBlock) {
+                    currentBlock = { startIndex: i, total: d.precipitationAmount, type: currentType };
+                } else {
+                    currentBlock.total += d.precipitationAmount;
+                }
+            } else {
+                if (currentBlock) {
+                    // End block
+                    if ((i - currentBlock.startIndex) >= MIN_HOURS) {
+                        blocks.push({
+                            startIndex: currentBlock.startIndex,
+                            endIndex: i - 1,
+                            total: currentBlock.total,
+                            type: currentBlock.type
+                        });
+                    }
+                    currentBlock = null;
+                }
+            }
+        }
+
+        // Handle case where block goes to end of data
+        if (currentBlock && (data.length - currentBlock.startIndex) >= MIN_HOURS) {
+            blocks.push({
+                startIndex: currentBlock.startIndex,
+                endIndex: data.length - 1,
+                total: currentBlock.total,
+                type: currentBlock.type
+            });
+        }
+
+        return blocks;
+    }, [data, showAccumulation]);
 
     return (
         <ComposedChart
@@ -38,12 +89,36 @@ export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
                     <rect width="2" height="4" transform="translate(0,0)" fill="#4caf50" />
                     <rect width="2" height="4" transform="translate(2,0)" fill="#2196f3" />
                 </pattern>
-                {/* Purple Gradient for Precipitation Probability */}
                 <linearGradient id="colorPrecipProb" x1="0" y1="0" x2="0" y2="1">
                     <stop offset="5%" stopColor="#ab47bc" stopOpacity={0.4} />
                     <stop offset="95%" stopColor="#ab47bc" stopOpacity={0.1} />
                 </linearGradient>
             </defs>
+
+            {/* Storm Blocks (Background Layer) */}
+            {stormBlocks.map((block, i) => (
+                <ReferenceArea
+                    key={`storm-${i}`}
+                    x1={block.startIndex}
+                    x2={block.endIndex}
+                    // No yAxisId needed, defaults to 0 (the main probability axis)
+                    y1={0}
+                    y2={0.25} // Restrict to bottom 25% as requested
+                    fill={block.type === 'snow' ? '#2196f3' : '#4caf50'}
+                    fillOpacity={0.2} // Slightly more visible since it's smaller
+                    label={{
+                        value: `${block.total.toFixed(units === 'metric' ? 0 : 2)} ${units === 'metric' ? 'mm' : 'in'}`,
+                        position: 'center',
+                        fill: '#cccccc', // Grey text for theme
+                        style: {
+                            textShadow: '0px 0px 4px rgba(0,0,0,0.9)',
+                            fontWeight: 'bold',
+                            fontSize: '11px'
+                        }
+                    }}
+                />
+            ))}
+
             <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} opacity={0.2} />
 
             {/* Explicit axes to allow layering of bars via different IDs */}

@@ -1,5 +1,9 @@
-import React, { useRef, useEffect } from 'react';
+import React, { useRef, useEffect, forwardRef, useImperativeHandle } from 'react';
 import './TimelineContainer.css';
+
+export interface TimelineHandle {
+    scrollToNow: () => void;
+}
 
 interface TimelineContainerProps {
     children: React.ReactNode;
@@ -12,7 +16,7 @@ interface TimelineContainerProps {
     nowIndex?: number; // The calculated "Now" index for initial scrolling
 }
 
-export const TimelineContainer: React.FC<TimelineContainerProps> = ({
+export const TimelineContainer = forwardRef<TimelineHandle, TimelineContainerProps>(({
     children,
     hours = 240,
     hourWidth = 60,
@@ -21,20 +25,30 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
     onTimeSelect,
     axisWidth = 32,
     nowIndex
-}) => {
+}, ref) => {
     const scrollRef = useRef<HTMLDivElement>(null);
     const totalWidth = hours * hourWidth + axisWidth; // Add axis width to total
 
-    // Scroll to "Now" on mount
-    useEffect(() => {
+    const scrollToNow = (smooth = true) => {
         if (scrollRef.current) {
-            // If nowIndex is provided (dynamic), use it. Otherwise fall back to startHourOffset.
-            // We want to see 3 hours of past data, so we scroll to "Now - 3h".
             const targetIndex = nowIndex !== undefined ? nowIndex : startHourOffset;
             const hoursFromStartToView = Math.max(0, targetIndex - 3);
             const scrollPos = hoursFromStartToView * hourWidth;
-            scrollRef.current.scrollLeft = scrollPos;
+            if (smooth) {
+                scrollRef.current.scrollTo({ left: scrollPos, behavior: 'smooth' });
+            } else {
+                scrollRef.current.scrollLeft = scrollPos;
+            }
         }
+    };
+
+    useImperativeHandle(ref, () => ({
+        scrollToNow: () => scrollToNow(true)
+    }));
+
+    // Scroll to "Now" on mount
+    useEffect(() => {
+        scrollToNow(false);
     }, [hourWidth, startHourOffset, nowIndex]);
 
     const isDragging = useRef(false);
@@ -115,4 +129,4 @@ export const TimelineContainer: React.FC<TimelineContainerProps> = ({
             </div>
         </div>
     );
-};
+});

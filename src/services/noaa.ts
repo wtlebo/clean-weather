@@ -62,27 +62,21 @@ export const getAllTideStations = async (): Promise<TideStation[]> => {
     }
 };
 
-export const findNearestStation = async (lat: number, lon: number): Promise<TideStation | null> => {
+export const findNearestStations = async (lat: number, lon: number, limit = 3): Promise<TideStation[]> => {
     const stations = await getAllTideStations();
-    if (!stations.length) return null;
+    if (!stations.length) return [];
 
-    let nearest: TideStation | null = null;
-    let minDist = Infinity;
+    // Calculate all distances
+    const withDist = stations.map(s => ({
+        ...s,
+        distance: getDistanceFromLatLonInMiles(lat, lon, s.lat, s.lng)
+    }));
 
-    for (const station of stations) {
-        const dist = getDistanceFromLatLonInMiles(lat, lon, station.lat, station.lng);
-        if (dist < minDist) {
-            minDist = dist;
-            nearest = { ...station, distance: dist };
-        }
-    }
+    // Sort by distance
+    withDist.sort((a, b) => a.distance - b.distance);
 
-    // Cutoff: 50 miles
-    if (nearest && minDist <= 50) {
-        return nearest;
-    }
-
-    return null;
+    // Filter by max distance (50 miles) and return top N
+    return withDist.filter(s => s.distance <= 50).slice(0, limit);
 };
 
 // Helper to format date as YYYYMMDD
@@ -103,10 +97,10 @@ export const fetchTidePredictions = async (stationId: string, startDate: Date, e
             application: 'CleanWeather',
             begin_date: beginDate,
             end_date: endDateStr,
-            datum: 'MSL', // Use Mean Sea Level to show +/- values around 0
+            datum: 'MLLW', // Match standard tide charts (Mean Lower Low Water)
             station: stationId,
             time_zone: 'gmt', //: Important: API supports 'gmt' or 'lst_ldt'. GMT is safer for parsing.
-            units: 'english', // feet
+            units: 'metric', // meters (App.tsx expects base metric data)
             interval: 'h', // Hourly
             format: 'json'
         });
@@ -133,31 +127,31 @@ export const fetchTidePredictions = async (stationId: string, startDate: Date, e
     }
 };
 
-export const fetchStationDatums = async (stationId: string): Promise<{ MHHW: number; HAT: number; MSL: number } | null> => {
+export const fetchStationDatums = async (stationId: string): Promise<{ MHHW: number; HAT: number; MSL: number; MLLW: number } | null> => {
     try {
-        const url = `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/${stationId}/datums.json`;
+        // Request Metric units for datums to match our prediction request
+        const url = `https://api.tidesandcurrents.noaa.gov/mdapi/prod/webapi/stations/${stationId}/datums.json?units=metric`;
         const response = await fetch(url);
         if (!response.ok) throw new Error('Failed to fetch datums');
         const data = await response.json();
 
-        // Extract Datums from the 'datums' array or top-level props
-        // Top level HAT is convenient. MSL usually in array.
-        // Let's look for them in the array for safety (except HAT might be computed/top-level only?)
-        // My content view showed 'HAT' at top level and 'datums' array.
-
+        // Extract Datums
         const mslDatum = data.datums?.find((d: any) => d.name === 'MSL');
         const mhhwDatum = data.datums?.find((d: any) => d.name === 'MHHW');
+        const mllwDatum = data.datums?.find((d: any) => d.name === 'MLLW');
 
         // HAT depends on station status, usually top level.
         const hat = data.HAT;
 
-        if (mslDatum && hat !== undefined) {
+        if (mslDatum && hat !== undefined && mllwDatum) {
             return {
                 MSL: mslDatum.value,
                 HAT: hat,
-                MHHW: mhhwDatum?.value || 0
+                MHHW: mhhwDatum?.value || 0,
+                MLLW: mllwDatum.value
             };
         }
+        return null;
         return null;
     } catch (error) {
         console.error('Error fetching NOAA datums:', error);

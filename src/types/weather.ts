@@ -17,6 +17,13 @@ export interface WeatherPoint {
     aqi: number | null; // 0-500
     uvIndex: number; // 0-11+
     dewPoint: number; // F
+    // Marine Data
+    waveHeight: number | null; // feet/meters
+    wavePeriod: number | null; // seconds
+    swellHeight: number | null; // feet/meters
+    swellPeriod: number | null; // seconds
+    swellDirection: number | null; // degrees
+    waterTemperature: number | null; // degrees
 }
 
 export type WeatherCondition = 'sunny' | 'clear' | 'partly-cloudy' | 'cloudy' | 'rainy' | 'stormy' | 'snowy' | 'sleet';

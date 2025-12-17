@@ -155,7 +155,13 @@ export const generateWeatherData = (startOffset = 120, totalHours = 240): Weathe
             humidity,
             aqi,
             uvIndex,
-            dewPoint
+            dewPoint,
+            waveHeight: null,
+            wavePeriod: null,
+            swellHeight: null,
+            swellPeriod: null,
+            swellDirection: null,
+            waterTemperature: null
         };
     });
 };
