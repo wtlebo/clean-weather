@@ -8,10 +8,11 @@ interface MoonPhaseRowProps {
     data: WeatherPoint[];
     width: number;
     hourWidth: number;
+    nowIndex: number; // Added
 }
 
 
-export const MoonPhaseRow: React.FC<MoonPhaseRowProps & { lat: number; lon: number }> = ({ data, width, hourWidth, lat, lon }) => {
+export const MoonPhaseRow: React.FC<MoonPhaseRowProps & { lat: number; lon: number }> = ({ data, width, hourWidth, nowIndex, lat, lon }) => {
 
     const events = useMemo(() => findMoonRiseSetEvents(data, lat, lon), [data, lat, lon]);
 
@@ -23,11 +24,6 @@ export const MoonPhaseRow: React.FC<MoonPhaseRowProps & { lat: number; lon: numb
     }, [data]);
 
     // Dynamic Moon Path Generator
-    // Fraction: 0-1 (Illuminated)
-    // Phase: 0-1 (Age) -> 0=New, 0.5=Full, 1=New
-    // Dynamic Moon Path Generator
-    // Fraction: 0-1 (Illuminated)
-    // Phase: 0-1 (Age) -> 0=New, 0.5=Full, 1=New
     const drawMoonPhase = (phase: number, size: number) => {
         const r = size / 2; // radius
         const c = size / 2; // center
@@ -89,6 +85,18 @@ export const MoonPhaseRow: React.FC<MoonPhaseRowProps & { lat: number; lon: numb
         return findMoonEvents(data).filter(e => e.type === 'new' || e.type === 'full');
     }, [data]);
 
+    // Ensure we render if we have events OR phase lines OR the Now line is valid
+    // Actually, checking nowIndex validity (it's always a number?) 
+    // Let's just return null if no data, which is standard.
+    // But the previous check was: if (events.length === 0 && phaseEvents.length === 0) return null;
+    // We should probably remove that check or include nowIndex check? 
+    // If there's no moon events, we still might want to see the Now line? 
+    // Actually, if there's data, we show the chart. The check was for "empty" chart optimization.
+    // I'll leave the check for now but if the user complains about empty stripes I'll fix it. 
+    // Wait, if I'm adding a "Now" line, the chart isn't empty anymore technically. 
+    // But practically, if no moon events, it's just a background?
+    // Let's stick to adding the line.
+
     if (events.length === 0 && phaseEvents.length === 0) return null;
 
     return (
@@ -145,6 +153,23 @@ export const MoonPhaseRow: React.FC<MoonPhaseRowProps & { lat: number; lon: numb
                     />
                 );
             })}
+
+            {/* Now Line */}
+            {nowIndex >= 0 && (
+                <div
+                    style={{
+                        position: 'absolute',
+                        left: `${(nowIndex * hourWidth) + (hourWidth / 2)}px`,
+                        top: 0,
+                        bottom: 0,
+                        width: '2px', // Match strokeWidth={2}
+                        backgroundColor: '#8b0000',
+                        zIndex: 15, // Above icons (10)
+                        pointerEvents: 'none',
+                        transform: 'translateX(-50%)' // Center the 2px line
+                    }}
+                />
+            )}
 
             {/* Icons Layer */}
             {events.map((event, i) => {

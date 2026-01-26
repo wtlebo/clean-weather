@@ -586,6 +586,7 @@ function App() {
               hourWidth={hourWidth}
               lat={currentLocation.latitude}
               lon={currentLocation.longitude}
+              nowIndex={nowIndex}
             />
           </WeatherPanel>
         );
