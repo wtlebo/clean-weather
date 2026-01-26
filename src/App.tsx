@@ -591,9 +591,9 @@ function App() {
         return (
           <WeatherPanel
             key="moon"
-            title="Moon Phase"
+            title="Moon"
             height={40} // Tighter height
-            axis={<StickyAxis domain={[0, 1]} ticks={[0, 1]} height={40} tickFormatter={(v: number) => v === 0 ? 'New' : 'Full'} />}
+            axis={<StickyAxis domain={[0, 1]} ticks={[0, 1]} height={40} tickFormatter={(v: number) => v === 0 ? 'New' : 'Full'} margin={{ top: 0, right: 0, left: 0, bottom: 0 }} />}
             tooltip={selectedData ? getTooltipContent('moon', selectedData) : null}
             tooltipLeft={tooltipLeft}
           >
