@@ -1,5 +1,5 @@
 import React, { useMemo } from 'react';
-import { AreaChart, Area } from 'recharts';
+import { AreaChart, Area, YAxis, CartesianGrid } from 'recharts';
 import SunCalc from 'suncalc';
 import { findMoonRiseSetEvents, findMoonEvents } from '../../utils/moon';
 import type { WeatherPoint } from '../../types/weather';
@@ -129,6 +129,8 @@ export const MoonPhaseRow: React.FC<MoonPhaseRowProps & { lat: number; lon: numb
                         isAnimationActive={false}
                         activeDot={false}
                     />
+                    <YAxis domain={[0, 1]} hide />
+                    <CartesianGrid vertical={false} stroke="#555" strokeDasharray="3 3" opacity={0.5} />
                 </AreaChart>
             </div>
 

@@ -593,6 +593,7 @@ function App() {
             key="moon"
             title="Moon Phase"
             height={40} // Tighter height
+            axis={<StickyAxis domain={[0, 1]} ticks={[0, 1]} height={40} tickFormatter={(v: number) => v === 0 ? 'New' : 'Full'} />}
             tooltip={selectedData ? getTooltipContent('moon', selectedData) : null}
             tooltipLeft={tooltipLeft}
           >
