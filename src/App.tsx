@@ -604,8 +604,9 @@ function App() {
                   // Custom Tick to fix clipping at edges
                   const isFull = payload.value === 1;
                   const isNew = payload.value === 0;
-                  // Shift Full (Top) DOWN, New (Bottom) UP
-                  const dy = isFull ? 8 : (isNew ? -8 : 3);
+                  // Shift Full (Top) DOWN, New (Bottom) UP (less than before)
+                  // User wanted to lower "New" significantly. Was -8. Try -2.
+                  const dy = isFull ? 8 : (isNew ? -2 : 3);
 
                   return (
                     <text
@@ -617,7 +618,7 @@ function App() {
                       fontSize={9}
                       fontWeight={500}
                     >
-                      {payload.value === 0 ? 'New' : 'Full'}
+                      {payload.value === 0 ? 'NEW' : 'FULL'}
                     </text>
                   );
                 }}
