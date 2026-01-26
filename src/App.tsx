@@ -1,6 +1,10 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
 import { Settings } from 'lucide-react';
+import { getMoonData } from './utils/moon';
+import { MoonPhaseRow } from './components/charts/MoonPhaseRow';
+
 import { TimelineContainer, type TimelineHandle } from './components/layout/TimelineContainer';
+
 import { TimeAxis } from './components/layout/TimeAxis';
 import { WeatherPanel } from './components/panels/WeatherPanel';
 import { TemperatureChart } from './components/charts/TemperatureChart';
@@ -116,17 +120,19 @@ function App() {
   // Fetch Data
 
 
-  const loadData = useCallback(async () => {
+  const loadData = useCallback(async (forceRefresh = false) => {
     setLoading(true);
     setError(null);
     try {
-      const { points, tideStation } = await fetchWeatherData(
+      const { points, tideStation, fetchedAt } = await fetchWeatherData(
         currentLocation.latitude,
-        currentLocation.longitude
+        currentLocation.longitude,
+        forceRefresh
       );
       setWeatherData(points);
       setTideStation(tideStation);
-      setLastFetchTime(new Date());
+      // If we forced a refresh, fetchedAt should be new.
+      setLastFetchTime(fetchedAt ? new Date(fetchedAt) : new Date());
     } catch (err) {
       console.error(err);
       setError("Failed to load weather data");
@@ -232,13 +238,20 @@ function App() {
       }
 
       // Calculate Visual Intensity (NWS Standards) based on Inches
-      // Light < 0.1", Moderate 0.1-0.3", Heavy > 0.3"
+      // Rain: Light < 0.1", Moderate 0.1-0.3", Heavy > 0.3"
+      // Snow: Light < 0.5", Moderate 0.5-1.0", Heavy > 1.0" (Roughly 10:1 but condensed for visual)
       const precipInches = isMetric ? precip / 25.4 : precip;
       let precipIntensity = 0;
       if (precipInches > 0) {
-        if (precipInches < 0.10) precipIntensity = 0.25; // 25% Height
-        else if (precipInches < 0.30) precipIntensity = 0.50; // 50% Height
-        else precipIntensity = 0.75; // 75% Height (Never 100%)
+        if (d.precipitationType === 'snow') {
+          if (precipInches < 0.5) precipIntensity = 0.25;
+          else if (precipInches < 1.0) precipIntensity = 0.50;
+          else precipIntensity = 0.75;
+        } else {
+          if (precipInches < 0.10) precipIntensity = 0.25;
+          else if (precipInches < 0.30) precipIntensity = 0.50;
+          else precipIntensity = 0.75;
+        }
       }
 
       // Filter Gusts: Only show if > 10 mph (4.5 m/s) over sustained wind
@@ -505,10 +518,20 @@ function App() {
       case 'sky':
         return <div style={boxStyle}><p style={{ color: '#aecbfa', margin: 0 }}>Cover: {Math.round(data.cloudCover * 100)}%</p></div>;
       case 'tide':
+        if (data.tideHeight === null || data.tideHeight === undefined) return null;
         return <div style={boxStyle}><p style={{ color: '#fff', margin: 0 }}>Tide: {data.tideHeight.toFixed(2)}{unitLabels.tide}</p></div>;
 
+      case 'moon':
+        const moon = getMoonData(data.timestamp);
+        return (
+          <div style={boxStyle}>
+            <p style={{ color: '#fff', margin: 0 }}>{moon.label}</p>
+            <p style={{ color: '#aaa', margin: 0 }}>{Math.round(moon.fraction * 100)}% Illuminated</p>
+          </div>
+        );
       case 'waterTemp':
-        return <div style={boxStyle}><p style={{ color: '#fff', margin: 0 }}>Water: {data.waterTemperature?.toFixed(1)}{unitLabels.temp}</p></div>;
+        if (data.waterTemperature === null || data.waterTemperature === undefined) return null;
+        return <div style={boxStyle}><p style={{ color: '#fff', margin: 0 }}>Water: {data.waterTemperature.toFixed(1)}{unitLabels.temp}</p></div>;
       default: return null;
     }
   };
@@ -545,6 +568,24 @@ function App() {
               showDailyHighLow={settings.temp.showDailyHighLow}
               units={settings.units}
               timezone={currentLocation.timezone}
+            />
+          </WeatherPanel>
+        );
+      case 'moon':
+        return (
+          <WeatherPanel
+            key="moon"
+            title="Moon Phase"
+            height={40} // Tighter height
+            tooltip={selectedData ? getTooltipContent('moon', selectedData) : null}
+            tooltipLeft={tooltipLeft}
+          >
+            <MoonPhaseRow
+              data={processedData}
+              width={totalWidth}
+              hourWidth={hourWidth}
+              lat={currentLocation.latitude}
+              lon={currentLocation.longitude}
             />
           </WeatherPanel>
         );
@@ -631,12 +672,25 @@ function App() {
           </WeatherPanel>
         );
       case 'tide':
-        let tideTitle = 'Tide Height - No Data at this Location';
-        if (tideStation) {
-          tideTitle = `Tide Height (${unitLabels.tide}) - ${tideStation.name}`;
-        } else if (processedData.some(d => d.tideHeight !== null)) {
-          tideTitle = `Tide Height (${unitLabels.tide})`;
+        const hasTideData = !!tideStation || processedData.some(d => d.tideHeight !== null);
+
+        if (!hasTideData) {
+          return (
+            <WeatherPanel
+              key="tide"
+              title={
+                <span>
+                  Tide Height <span style={{ color: '#555', fontSize: '0.9em' }}>- NO DATA AT THIS LOCATION</span>
+                </span>
+              }
+              height={0}
+            >
+              <></>
+            </WeatherPanel>
+          );
         }
+
+        const tideTitle = tideStation ? `Tide Height (${unitLabels.tide}) - ${tideStation.name}` : `Tide Height (${unitLabels.tide})`;
 
         return (
           <WeatherPanel
@@ -791,7 +845,7 @@ function App() {
           <StatusIndicator
             lastFetchTime={lastFetchTime}
             currentTime={currentTime}
-            onRefresh={loadData}
+            onRefresh={() => loadData(true)}
             isLoading={loading}
           />
           <ShareButton />
@@ -831,6 +885,26 @@ function App() {
 
       {!loading && !error && (
         <main className="app-main">
+          {/* Global Time Label Overlay */}
+          {selectedData && tooltipLeft !== undefined && (
+            <div
+              style={{
+                position: 'absolute',
+                top: '50px', // Below the header
+                left: '0',
+                width: '100%',
+                pointerEvents: 'none',
+                zIndex: 999,
+                // We need to sync X with the specific scroll position, which is tricky from outside.
+                // Actually, if we put it HERE (outside timeline), we can't easily sync X.
+                // So it MUST go inside TimelineContainer to pick up the X scroll.
+                // BUT if it goes inside, it scrolls vertically away.
+              }}
+            >
+              {/* Placeholder - We need to insert it inside TimelineContainer */}
+            </div>
+          )}
+
           <TimelineContainer
             ref={timelineRef}
             hours={weatherData.length > 0 ? weatherData.length : HOURS}
@@ -840,6 +914,43 @@ function App() {
             onTimeSelect={handleTimeSelect}
             nowIndex={nowIndex}
           >
+            {/* Global Time Label - Sticky & Centered */}
+            {selectedData && tooltipLeft !== undefined && (
+              <div style={{
+                position: 'absolute',
+                left: tooltipLeft + 32, // X-Position: Moves with content
+                top: 0,
+                bottom: 0, // Span full height
+                width: '1px', // Minimal width wrapper
+                zIndex: 200,
+                pointerEvents: 'none',
+              }}>
+                <div style={{
+                  position: 'sticky',
+                  top: '52px', // Y-Position: Sticks to top (adjusted up)
+                  left: 0, // Reset
+                  width: 'fit-content',
+                  transform: 'translateX(-50%)',
+                  backgroundColor: '#333',
+                  color: '#fff',
+                  padding: '4px 8px',
+                  borderRadius: '4px',
+                  fontSize: '12px',
+                  fontWeight: 'bold',
+                  border: '1px solid #555',
+                  marginTop: '4px',
+                  whiteSpace: 'nowrap'
+                }}>
+                  {new Intl.DateTimeFormat('en-US', {
+                    weekday: 'short',
+                    hour: 'numeric',
+                    minute: 'numeric',
+                    timeZone: currentLocation.timezone
+                  }).format(selectedData.timestamp)}
+                </div>
+              </div>
+            )}
+
             {/* Axis */}
             <TimeAxis
               hours={weatherData.length > 0 ? weatherData.length : HOURS}
@@ -849,6 +960,8 @@ function App() {
               customStartTime={processedData.length > 0 ? processedData[0].timestamp : undefined}
               timezone={currentLocation.timezone}
             />
+
+
 
             {/* Panels */}
             {settings.chartOrder

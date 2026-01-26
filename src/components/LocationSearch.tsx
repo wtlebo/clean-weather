@@ -27,9 +27,10 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ currentLocationN
 
     useEffect(() => {
         const timer = setTimeout(async () => {
-            if (query.length >= 3) {
+            const trimmedQuery = query.trim();
+            if (trimmedQuery.length >= 3) {
                 setLoading(true);
-                const locations = await searchLocations(query);
+                const locations = await searchLocations(trimmedQuery);
                 setResults(locations);
                 setLoading(false);
             } else {

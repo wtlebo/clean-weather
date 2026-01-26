@@ -39,8 +39,25 @@ const deg2rad = (deg: number) => {
 // Cache stations in memory to avoid repeated large fetches
 let cachedStations: TideStation[] | null = null;
 
+const CACHE_KEY_STATIONS = 'noaa_stations_cache';
+const CACHE_DURATION_STATIONS = 30 * 24 * 60 * 60 * 1000; // 30 Days
+
 export const getAllTideStations = async (): Promise<TideStation[]> => {
     if (cachedStations) return cachedStations;
+
+    // Try Local Storage
+    try {
+        const cached = localStorage.getItem(CACHE_KEY_STATIONS);
+        if (cached) {
+            const { timestamp, data } = JSON.parse(cached);
+            if (Date.now() - timestamp < CACHE_DURATION_STATIONS) {
+                cachedStations = data;
+                return data;
+            }
+        }
+    } catch (e) {
+        console.warn('Station cache read error', e);
+    }
 
     try {
         const response = await fetch(STATIONS_URL);
@@ -54,6 +71,16 @@ export const getAllTideStations = async (): Promise<TideStation[]> => {
             lat: s.lat,
             lng: s.lng
         }));
+
+        // Save to Cache
+        try {
+            localStorage.setItem(CACHE_KEY_STATIONS, JSON.stringify({
+                timestamp: Date.now(),
+                data: cachedStations
+            }));
+        } catch (e) {
+            console.warn('Station cache write error', e);
+        }
 
         return cachedStations || [];
     } catch (error) {
@@ -116,6 +143,11 @@ export const fetchTidePredictions = async (stationId: string, startDate: Date, e
         const data = await response.json();
         if (data.error) {
             // NOAA returns JSON with error field for some cases
+            // Gracefully handle "No Predictions" (common for stations with limited coverage)
+            if (data.error.message && data.error.message.includes('No Predictions data was found')) {
+                console.warn('NOAA: No tide predictions available for this station (expected).');
+                return [];
+            }
             console.error('NOAA API returned error:', data.error);
             return [];
         }

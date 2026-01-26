@@ -43,6 +43,17 @@ export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
             if (hasPrecip) {
                 if (!currentBlock) {
                     currentBlock = { startIndex: i, total: d.precipitationAmount, type: currentType };
+                } else if (currentBlock.type !== currentType) {
+                    // Type mismatch: Close previous block and start new one
+                    if ((i - currentBlock.startIndex) >= MIN_HOURS) {
+                        blocks.push({
+                            startIndex: currentBlock.startIndex,
+                            endIndex: i - 1,
+                            total: currentBlock.total,
+                            type: currentBlock.type
+                        });
+                    }
+                    currentBlock = { startIndex: i, total: d.precipitationAmount, type: currentType };
                 } else {
                     currentBlock.total += d.precipitationAmount;
                 }

@@ -65,6 +65,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
         { id: 'wind', visible: true, label: 'Wind' },
         { id: 'sky', visible: true, label: 'Sky Cover' },
         { id: 'tide', visible: true, label: 'Tides' },
+        { id: 'moon', visible: true, label: 'Moon Phase' },
         { id: 'marine', visible: false, label: 'Marine / Surf' },
         { id: 'waterTemp', visible: false, label: 'Water Temp' },
         { id: 'aqi', visible: false, label: 'Air Quality' },

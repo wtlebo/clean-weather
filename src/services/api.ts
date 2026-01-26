@@ -31,6 +31,7 @@ interface OpenMeteoResponse {
 export interface WeatherResult {
     points: WeatherPoint[];
     tideStation: { name: string; distance: number; alertThreshold?: number; } | null;
+    fetchedAt?: number;
 }
 
 export const searchLocations = async (query: string): Promise<LocationResult[]> => {
@@ -49,7 +50,31 @@ export const searchLocations = async (query: string): Promise<LocationResult[]> 
 
 
 
-export const fetchWeatherData = async (lat: number, lon: number): Promise<WeatherResult> => {
+// Cache Helper
+const CACHE_DURATION = 15 * 60 * 1000; // 15 Minutes
+
+export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: boolean = false): Promise<WeatherResult> => {
+    const cacheKey = `weather_cache_${lat.toFixed(4)}_${lon.toFixed(4)}`;
+
+    // 1. Try Cache
+    try {
+        const cached = localStorage.getItem(cacheKey);
+        if (!forceRefresh && cached) {
+            const { timestamp, data } = JSON.parse(cached);
+            if (Date.now() - timestamp < CACHE_DURATION) {
+                console.log('Returning cached weather data');
+                // Re-hydrate Date objects
+                const hydratedPoints = data.points.map((p: any) => ({
+                    ...p,
+                    timestamp: new Date(p.timestamp)
+                }));
+                return { ...data, points: hydratedPoints, fetchedAt: timestamp };
+            }
+        }
+    } catch (e) {
+        console.warn('Cache read error', e);
+    }
+
     const params = new URLSearchParams({
         latitude: lat.toString(),
         longitude: lon.toString(),
@@ -161,7 +186,20 @@ export const fetchWeatherData = async (lat: number, lon: number): Promise<Weathe
         }
 
         const points = normalizeData(weatherData, aqiData, marineData, tidePredictions);
-        return { points, tideStation };
+        const result = { points, tideStation };
+
+        // Save to Cache
+        try {
+            const now = Date.now();
+            localStorage.setItem(cacheKey, JSON.stringify({
+                timestamp: now,
+                data: result
+            }));
+            return { ...result, fetchedAt: now };
+        } catch (e) {
+            console.warn('Cache write error', e);
+            return result; // Return anyway
+        }
 
     } catch (error) {
         console.error('Weather fetch error:', error);
@@ -245,7 +283,7 @@ const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, marin
             temperature: Number(hourly.temperature_2m[i]),
             feelsLike: Number(hourly.apparent_temperature[i]),
             precipitationProbability: Number(hourly.precipitation_probability[i]) / 100, // API is 0-100, we want 0-1
-            precipitationAmount: totalPrecip,
+            precipitationAmount: precipitationType === 'snow' ? totalPrecip * 10 : totalPrecip, // Force standard 10:1 Snow Ratio (Liquid * 10)
             precipitationType,
             windSpeed: Number(hourly.wind_speed_10m[i]),
             windDirection: Number(hourly.wind_direction_10m[i]),

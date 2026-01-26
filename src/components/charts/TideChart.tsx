@@ -52,14 +52,6 @@ export const TideChart: React.FC<TideChartProps> = ({
 
     const off = gradientOffset();
 
-    console.log('[TideChart Debug]', {
-        domain,
-        alertThreshold,
-        off,
-        dataMax: domain ? domain[1] : 'auto',
-        dataMin: domain ? domain[0] : 'auto'
-    });
-
     // Calculate Local Min/Max for markers
     const markers = React.useMemo(() => {
         if (!showHighLow) return [];
