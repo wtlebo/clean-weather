@@ -62,7 +62,7 @@ export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: b
         if (!forceRefresh && cached) {
             const { timestamp, data } = JSON.parse(cached);
             if (Date.now() - timestamp < CACHE_DURATION) {
-                console.log('Returning cached weather data');
+                if (import.meta.env.DEV) console.log('Returning cached weather data');
                 // Re-hydrate Date objects
                 const hydratedPoints = data.points.map((p: any) => ({
                     ...p,

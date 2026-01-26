@@ -160,7 +160,7 @@ function App() {
     const interval = setInterval(() => {
       const diffMinutes = (new Date().getTime() - lastFetchTime.getTime()) / (1000 * 60);
       if (diffMinutes >= 60) {
-        console.log('Auto-refreshing weather data...');
+        if (import.meta.env.DEV) console.log('Auto-refreshing weather data...');
         loadData();
       }
     }, 60000); // Check every minute
