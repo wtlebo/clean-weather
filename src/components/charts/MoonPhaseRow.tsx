@@ -127,6 +127,7 @@ export const MoonPhaseRow: React.FC<MoonPhaseRowProps & { lat: number; lon: numb
                         stroke="none"
                         fill="url(#moonGradient)"
                         isAnimationActive={false}
+                        activeDot={false}
                     />
                 </AreaChart>
             </div>

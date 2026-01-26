@@ -532,6 +532,22 @@ function App() {
       case 'waterTemp':
         if (data.waterTemperature === null || data.waterTemperature === undefined) return null;
         return <div style={boxStyle}><p style={{ color: '#fff', margin: 0 }}>Water: {data.waterTemperature.toFixed(1)}{unitLabels.temp}</p></div>;
+      case 'marine':
+        // Calculate conversions if needed or display raw
+        // MarineChart logic uses: (val || 0) * multiplier
+        const isImperial = settings.units === 'imperial';
+        const mult = isImperial ? 3.28084 : 1;
+        const marineUnit = isImperial ? 'ft' : 'm';
+
+        const wave = data.waveHeight !== null ? (data.waveHeight * mult).toFixed(1) : '-';
+        const swell = data.swellHeight !== null ? (data.swellHeight * mult).toFixed(1) : '-';
+
+        return (
+          <div style={boxStyle}>
+            <p style={{ color: '#006994', margin: 0 }}>Wave: {wave}{marineUnit}</p>
+            <p style={{ color: '#9c27b0', margin: 0 }}>Swell: {swell}{marineUnit}</p>
+          </div>
+        );
       default: return null;
     }
   };

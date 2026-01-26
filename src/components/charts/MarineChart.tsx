@@ -61,7 +61,7 @@ export const MarineChart: React.FC<MarineChartProps> = ({
                 fillOpacity={1}
                 fill="url(#colorWave)"
                 strokeWidth={2}
-                activeDot={{ r: 4, strokeWidth: 0 }}
+                activeDot={false}
             />
 
             <Line
@@ -70,7 +70,7 @@ export const MarineChart: React.FC<MarineChartProps> = ({
                 stroke="#9c27b0"
                 strokeWidth={2}
                 dot={false}
-                activeDot={{ r: 4, strokeWidth: 0 }}
+                activeDot={false}
             />
 
             {nowIndex !== undefined && (
