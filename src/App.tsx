@@ -593,7 +593,36 @@ function App() {
             key="moon"
             title="Moon"
             height={40} // Tighter height
-            axis={<StickyAxis domain={[0, 1]} ticks={[0, 1]} height={40} tickFormatter={(v: number) => v === 0 ? 'New' : 'Full'} margin={{ top: 0, right: 0, left: 0, bottom: 0 }} />}
+            axis={
+              <StickyAxis
+                domain={[0, 1]}
+                ticks={[0, 1]}
+                height={40}
+                tickFormatter={(v: number) => v === 0 ? 'New' : 'Full'}
+                margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
+                tick={({ x, y, payload }: any) => {
+                  // Custom Tick to fix clipping at edges
+                  const isFull = payload.value === 1;
+                  const isNew = payload.value === 0;
+                  // Shift Full (Top) DOWN, New (Bottom) UP
+                  const dy = isFull ? 8 : (isNew ? -8 : 3);
+
+                  return (
+                    <text
+                      x={x}
+                      y={y}
+                      dy={dy}
+                      textAnchor="end"
+                      fill="#aaa"
+                      fontSize={9}
+                      fontWeight={500}
+                    >
+                      {payload.value === 0 ? 'New' : 'Full'}
+                    </text>
+                  );
+                }}
+              />
+            }
             tooltip={selectedData ? getTooltipContent('moon', selectedData) : null}
             tooltipLeft={tooltipLeft}
           >
