@@ -584,6 +584,8 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
                         <LocationSearch
                             currentLocationName={location.name}
                             onLocationSelect={setLocation}
+                            fontSize="1.2rem"
+                            maxWidth="300px"
                         />
                     </div>
                     <span style={{ fontSize: '0.8em', opacity: 0.7, color: '#aaa' }}>(for calendar sync)</span>

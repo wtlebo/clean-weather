@@ -6,9 +6,16 @@ import type { LocationResult } from '../services/api';
 interface LocationSearchProps {
     currentLocationName: string;
     onLocationSelect: (location: LocationResult) => void;
+    fontSize?: string;
+    maxWidth?: string;
 }
 
-export const LocationSearch: React.FC<LocationSearchProps> = ({ currentLocationName, onLocationSelect }) => {
+export const LocationSearch: React.FC<LocationSearchProps> = ({
+    currentLocationName,
+    onLocationSelect,
+    fontSize = '0.8rem',
+    maxWidth = '125px'
+}) => {
     const [isOpen, setIsOpen] = useState(false);
     const [query, setQuery] = useState('');
     const [results, setResults] = useState<LocationResult[]>([]);
@@ -64,7 +71,7 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ currentLocationN
                                 color: 'white',
                                 marginLeft: '8px',
                                 outline: 'none',
-                                fontSize: '0.75rem', // Reduced from 0.9rem (approx 83%, adjusted to look right)
+                                fontSize: fontSize, // Use passed font size
                                 width: '200px'
                             }}
                         />
@@ -116,14 +123,27 @@ export const LocationSearch: React.FC<LocationSearchProps> = ({ currentLocationN
                         cursor: 'pointer',
                         display: 'flex',
                         alignItems: 'center',
-                        gap: '6px',
+                        gap: '4px',
                         margin: 0,
-                        fontSize: '1rem', // Implicitly, was inheriting h1 (2em) or similar. Let's make it explicit and smaller.
-                        fontWeight: 500   // Matching the look, but smaller
+                        fontSize: fontSize,
+                        fontWeight: 400,
+                        color: '#aaa', // Subtitle color
+                        lineHeight: 1,
+                        maxWidth: maxWidth,
                     }}
+                    onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+                    onMouseLeave={(e) => e.currentTarget.style.color = '#aaa'}
+                    title="Change Location"
                 >
-                    {currentLocationName}
-                    <Search size={12} color="#555" style={{ opacity: 0.5 }} />
+                    <span style={{
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        display: 'block'
+                    }}>
+                        {currentLocationName}
+                    </span>
+                    <Search size={10} style={{ opacity: 0.5, minWidth: '10px' }} />
                 </div>
             )}
         </div>
