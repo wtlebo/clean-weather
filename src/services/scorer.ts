@@ -63,8 +63,9 @@ const getParamValue = (p: WeatherPoint, param: WeatherParameter, context?: { all
         case 'swellDirection': return p.swellDirection;
 
         // Astro
-        case 'moonPhase': return 0; // TODO
-        case 'moonIllumination': return 0; // TODO
+        // Astro
+        case 'moonPhase': return SunCalc.getMoonIllumination(p.timestamp).phase;
+        case 'moonIllumination': return SunCalc.getMoonIllumination(p.timestamp).fraction * 100;
         case 'isDaylight': return p.isDay ? 1 : 0;
         case 'timeOfDay': return p.timestamp.getHours();
 
