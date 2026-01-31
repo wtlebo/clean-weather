@@ -1,5 +1,5 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
-import { Settings, ChevronLeft, ChevronRight, User } from 'lucide-react';
+import { ChevronLeft, ChevronRight, User } from 'lucide-react';
 import { getMoonData, getMoonPosition } from './utils/moon';
 import { MoonPhaseRow } from './components/charts/MoonPhaseRow';
 import { getSunPosition } from './utils/sun';
