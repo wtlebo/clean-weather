@@ -1,10 +1,12 @@
 
-import React, { useState } from 'react';
-import { X, Plus, Info, Save, Trash2, MapPin } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { X, Plus, Info, Save, Trash2, MapPin, BookOpen, UploadCloud } from 'lucide-react';
 import EmojiPicker from 'emoji-picker-react';
 import { LocationSearch } from '../LocationSearch';
 import type { LocationResult } from '../../services/api';
 import type { Activity, Condition, WeatherCondition, TimeCondition, WeatherParameter, Operator, ReferenceEvent, DayType } from '../../types/activity';
+import { useAuth } from '../../contexts/AuthContext';
+import { activityStore } from '../../services/activityStore';
 
 interface ActivityBuilderProps {
     existingActivity?: Activity;
@@ -97,9 +99,47 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
     const [dealBreakers, setDealBreakers] = useState<Condition[]>(existingActivity?.dealBreakers || []);
     const [niceToHaves, setNiceToHaves] = useState<Condition[]>(existingActivity?.niceToHaves || []);
 
+    const { isAdmin } = useAuth();
+    const [presets, setPresets] = useState<Activity[]>([]);
+    const [showPresets, setShowPresets] = useState(false);
+
     // UI States
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [showInfo, setShowInfo] = useState(false);
+
+    useEffect(() => {
+        const loadPresets = async () => {
+            if (!existingActivity) { // Only load if creating new (optimization)
+                const p = await activityStore.getPresets();
+                setPresets(p);
+            }
+        };
+        loadPresets();
+    }, [existingActivity]);
+
+    const handleLoadPreset = (preset: Activity) => {
+        setName(preset.name);
+        setIcon(preset.icon);
+        setDealBreakers(preset.dealBreakers);
+        setNiceToHaves(preset.niceToHaves);
+        // Keep current location (user's default), do NOT overwrite with preset location
+        setShowPresets(false);
+    };
+
+    const handleSaveAsPreset = async () => {
+        if (!isAdmin) return;
+        const preset: Activity = {
+            id: 'preset_' + Math.random().toString(36).substr(2, 9),
+            name,
+            icon,
+            color: '#3b82f6',
+            location, // Admin's location preference saved, but ignored on load
+            dealBreakers,
+            niceToHaves
+        };
+        await activityStore.savePreset(preset);
+        alert('Saved as Preset!');
+    };
 
     // Helper to get bounds (converted if metric)
     const getBounds = (param: WeatherParameter) => {
@@ -537,55 +577,90 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
                 position: 'relative'
             }}>
                 {/* Header */}
-                <div style={{ padding: '20px', borderBottom: '1px solid #333', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-                        {/* Emoji Picker Button */}
-                        <div style={{ position: 'relative' }}>
+                <div style={{ padding: '20px', borderBottom: '1px solid #333', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {/* Preset Loader (New) */}
+                    {!existingActivity && presets.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
                             <button
-                                onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                                onClick={() => setShowPresets(!showPresets)}
                                 style={{
-                                    width: '40px', height: '40px', fontSize: '24px',
-                                    background: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px',
-                                    cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                    display: 'flex', alignItems: 'center', gap: '6px',
+                                    background: '#3f3f46', color: '#fff', border: 'none',
+                                    padding: '6px 12px', borderRadius: '20px', fontSize: '0.85rem', cursor: 'pointer'
                                 }}
                             >
-                                {icon}
+                                <BookOpen size={14} /> {showPresets ? 'Cancel' : 'Load a Preset Activity'}
                             </button>
-                            {showEmojiPicker && (
-                                <div style={{
-                                    position: 'absolute', top: '100%', left: 0, marginTop: '8px',
-                                    zIndex: 3100, boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
-                                }}>
-                                    <EmojiPicker
-                                        theme={'dark' as any}
-                                        onEmojiClick={(data) => {
-                                            setIcon(data.emoji);
-                                            setShowEmojiPicker(false);
-                                        }}
-                                        width={350}
-                                        height={400}
-                                    />
+                            {showPresets && (
+                                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
+                                    {presets.map(p => (
+                                        <button
+                                            key={p.id}
+                                            onClick={() => handleLoadPreset(p)}
+                                            style={{
+                                                whiteSpace: 'nowrap', background: '#27272a', border: '1px solid #444', color: '#ccc',
+                                                padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem',
+                                                display: 'flex', alignItems: 'center', gap: '4px'
+                                            }}
+                                        >
+                                            <span>{p.icon}</span> {p.name}
+                                        </button>
+                                    ))}
                                 </div>
                             )}
                         </div>
+                    )}
 
-                        <input
-                            type="text"
-                            value={name}
-                            onChange={(e) => setName(e.target.value)}
-                            style={{ fontSize: '1.25rem', fontWeight: 'bold', background: 'transparent', border: 'none', color: '#fff', outline: 'none' }}
-                            placeholder="Activity Name"
-                        />
-                    </div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <button
-                            onClick={() => setShowInfo(!showInfo)}
-                            style={{ color: showInfo ? '#3b82f6' : '#888', background: 'none', border: 'none', cursor: 'pointer' }}
-                            title="Scoring Info"
-                        >
-                            <Info size={20} />
-                        </button>
-                        <button onClick={onClose} style={{ color: '#888', background: 'none', border: 'none', cursor: 'pointer' }}><X /></button>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                            {/* Emoji Picker Button */}
+                            <div style={{ position: 'relative' }}>
+                                <button
+                                    onClick={() => setShowEmojiPicker(!showEmojiPicker)}
+                                    style={{
+                                        width: '40px', height: '40px', fontSize: '24px',
+                                        background: '#27272a', border: '1px solid #3f3f46', borderRadius: '8px',
+                                        cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center'
+                                    }}
+                                >
+                                    {icon}
+                                </button>
+                                {showEmojiPicker && (
+                                    <div style={{
+                                        position: 'absolute', top: '100%', left: 0, marginTop: '8px',
+                                        zIndex: 3100, boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)'
+                                    }}>
+                                        <EmojiPicker
+                                            theme={'dark' as any}
+                                            onEmojiClick={(data) => {
+                                                setIcon(data.emoji);
+                                                setShowEmojiPicker(false);
+                                            }}
+                                            width={350}
+                                            height={400}
+                                        />
+                                    </div>
+                                )}
+                            </div>
+
+                            <input
+                                type="text"
+                                value={name}
+                                onChange={(e) => setName(e.target.value)}
+                                style={{ fontSize: '1.25rem', fontWeight: 'bold', background: 'transparent', border: 'none', color: '#fff', outline: 'none' }}
+                                placeholder="Activity Name"
+                            />
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <button
+                                onClick={() => setShowInfo(!showInfo)}
+                                style={{ color: showInfo ? '#3b82f6' : '#888', background: 'none', border: 'none', cursor: 'pointer' }}
+                                title="Scoring Info"
+                            >
+                                <Info size={20} />
+                            </button>
+                            <button onClick={onClose} style={{ color: '#888', background: 'none', border: 'none', cursor: 'pointer' }}><X /></button>
+                        </div>
                     </div>
                 </div>
 
@@ -680,6 +755,15 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
                     <button onClick={handleSave} style={{ padding: '8px 20px', borderRadius: '6px', background: '#fff', color: '#000', border: 'none', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
                         <Save size={16} /> Save Activity
                     </button>
+                    {isAdmin && (
+                        <button
+                            onClick={handleSaveAsPreset}
+                            title="Save to Public Presets (Admin)"
+                            style={{ padding: '8px', borderRadius: '6px', background: '#3f3f46', color: '#fff', border: 'none', cursor: 'pointer' }}
+                        >
+                            <UploadCloud size={16} />
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

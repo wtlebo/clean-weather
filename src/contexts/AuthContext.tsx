@@ -18,6 +18,7 @@ interface AuthContextType {
     logout: () => Promise<void>;
     googleToken: string | null;
     togglePremium: () => Promise<void>; // Mock method
+    isAdmin: boolean;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -26,6 +27,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const [isPremium, setIsPremium] = useState(false);
+    const [isAdmin, setIsAdmin] = useState(false);
     const [googleToken, setGoogleToken] = useState<string | null>(null);
 
     useEffect(() => {
@@ -39,17 +41,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (userSnap.exists()) {
                     const data = userSnap.data();
                     setIsPremium(!!data.isPremium);
+                    // Admin check: Explicit flag or Hardcoded for specific user
+                    const isMyAdmin = data.isAdmin === true || currentUser.email === 'wtlebo@gmail.com'; // Hardcode for now as requested
+                    setIsAdmin(isMyAdmin);
                 } else {
                     // Initialize free user
+                    const isMyAdmin = currentUser.email === 'wtlebo@gmail.com';
                     await setDoc(userRef, {
                         email: currentUser.email,
                         isPremium: false,
+                        isAdmin: isMyAdmin,
                         createdAt: new Date().toISOString()
                     });
                     setIsPremium(false);
+                    setIsAdmin(isMyAdmin);
                 }
             } else {
                 setIsPremium(false);
+                setIsAdmin(false);
             }
             setLoading(false);
         });
@@ -95,7 +104,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     return (
-        <AuthContext.Provider value={{ user, loading, isPremium, signInWithGoogle, logout, googleToken, togglePremium }}>
+        <AuthContext.Provider value={{ user, loading, isPremium, signInWithGoogle, logout, googleToken, togglePremium, isAdmin }}>
             {!loading && children}
         </AuthContext.Provider>
     );
