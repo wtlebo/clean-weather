@@ -217,7 +217,7 @@ function App() {
         for (const block of blocks) {
           await service.createEvent(calendarId, {
             summary: block.summary,
-            description: block.description,
+            description: block.htmlDescription, // Use HTML for clickable links
             location: eventLocation, // Pass location name
             start: block.start,
             end: block.end
