@@ -57,7 +57,26 @@ export const generateCalendarBlocks = (
     return blocks;
 };
 
-// ... (helpers)
+// Helper to get cardinal direction
+const getWindDirection = (deg: number): string => {
+    const val = Math.floor((deg / 22.5) + 0.5);
+    const arr = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+    return arr[val % 16];
+};
+
+// Helper to format conditions
+const formatCondition = (c: any): string => {
+    if (c.type === 'time') {
+        if (c.subType === 'daylight') return `Daylight (${c.daylightMode === 'night' ? 'Night' : 'Day'})`;
+        if (c.subType === 'event') return `${c.event}`;
+        if (c.subType === 'range') return `Time: ${c.startHour}-${c.endHour}`;
+    }
+    if (c.type === 'weather') {
+        const pName = c.parameterId.replace(/([A-Z])/g, ' $1').replace(/^./, (str: string) => str.toUpperCase()); // Camel to Title
+        return `${pName} ${c.operator} ${c.value}${c.value2 ? ` & ${c.value2}` : ''}`;
+    }
+    return 'Custom Rule';
+};
 
 const createBlock = (
     activity: Activity,
@@ -67,8 +86,56 @@ const createBlock = (
     locationName: string,
     baseUrl: string // New param
 ): CalendarBlock => {
-    // ... (rest of code)
-    // ...
+    // 1. Time Range
+    const startTime = new Date(block.points[0].timestamp);
+    const endTime = new Date(block.points[block.points.length - 1].timestamp);
+    endTime.setHours(endTime.getHours() + 1);
+
+    // 2. Summary
+    const summary = `Ideal for ${activity.name}`;
+
+    // 3. Description Construction
+    const lines: string[] = [];
+    lines.push('Conditions are ideal based on your preferences.');
+    lines.push('');
+
+    // --- Stats ---
+    const firstP = block.points[0];
+    const windDir = getWindDirection(firstP.windDirection);
+
+    lines.push(`🌡️ Temp: ${Math.round(firstP.temperature)}°F`);
+    lines.push(`💨 Wind: ${Math.round(firstP.windSpeed)}mph from ${windDir}`); // Changed to include cardinal
+    lines.push(`☁️ Sky: ${Math.round(firstP.cloudCover * 100)}%`); // Added Sky
+    lines.push(`💧 Precip: ${Math.round(firstP.precipitationProbability * 100)}%`); // Added Precip
+
+    // --- Rules Met ---
+    // We want to list the Deal Breakers that were passed
+    if (activity.dealBreakers.length > 0) {
+        lines.push('');
+        lines.push('✅ Criteria Met:');
+        activity.dealBreakers.forEach(c => {
+            lines.push(`- ${formatCondition(c)}`); // List readable rule
+        });
+    }
+
+    // --- Astronomical ---
+    const hasMoonRule = activity.niceToHaves.some(c => c.type === 'time' && (c.subType === 'event' && c.event?.includes('moon')));
+
+    if (hasMoonRule) {
+        const moon = SunCalc.getMoonIllumination(startTime);
+        const moonPos = SunCalc.getMoonPosition(startTime, lat, lon);
+        const phase = Math.round(moon.fraction * 100);
+        const altitude = (moonPos.altitude * (180 / Math.PI)).toFixed(1);
+        const azimuth = (moonPos.azimuth * (180 / Math.PI) + 180).toFixed(0);
+
+        lines.push('');
+        lines.push(`🌙 Moon Details:`);
+        lines.push(`- Illumination: ${phase}%`);
+        lines.push(`- Elevation: ${altitude}°`);
+        lines.push(`- Azimuth: ${azimuth}°`);
+    }
+
+    lines.push('');
 
     // Generate Share Link (Deep Link)
     const sharePayload = encodeShareData({
