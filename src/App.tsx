@@ -1644,7 +1644,7 @@ function App() {
                 }
               >
                 <ActivityRow
-                  points={processedData}
+                  points={weatherData}
                   activity={activity}
                   lat={currentLocation.latitude}
                   lon={currentLocation.longitude}
