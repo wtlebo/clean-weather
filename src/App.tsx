@@ -47,6 +47,7 @@ import { generateCalendarBlocks } from './utils/scheduler';
 import { calculateActivityScore } from './services/scorer';
 import { PrivacyPolicy } from './components/PrivacyPolicy';
 import { TermsOfService } from './components/TermsOfService';
+import { ProfileDialog } from './components/ProfileDialog'; // New Import
 
 const HOURS = 240; // 10 days
 const DEFAULT_HOUR_WIDTH = 10; // px - Condensed for mobile
@@ -64,8 +65,12 @@ function App() {
   // Scale state for pinch-to-zoom
   const [hourWidth, setHourWidth] = useState(DEFAULT_HOUR_WIDTH);
 
+  // Auth
+  const { user, signInWithGoogle, logout, googleToken, isPremium } = useAuth();
+
   // UI State for Activity Manager
   const [isManagerOpen, setIsManagerOpen] = useState(false);
+  const [isProfileOpen, setIsProfileOpen] = useState(false); // New State
   const [isSyncing, setIsSyncing] = useState(false);
   const [pendingSync, setPendingSync] = useState(false); // Track if user wanted to sync but needed login
 
@@ -103,7 +108,6 @@ function App() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const { user, signInWithGoogle, logout, isPremium, googleToken } = useAuth();
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
@@ -1331,28 +1335,9 @@ function App() {
             activity={activities.length > 0 ? activities[0] : undefined}
             mode={currentConfig.mode}
           />
-          <button
-            className="icon-button"
-            onClick={() => setIsSettingsOpen(true)}
-            style={{
-              background: 'transparent',
-              border: 'none',
-              cursor: 'pointer',
-              color: '#888',
-              padding: '4px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              transition: 'color 0.2s'
-            }}
-            onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
-            onMouseLeave={(e) => e.currentTarget.style.color = '#888'}
-            title="Settings"
-          >
-            <Settings size={18} />
-          </button>
+          {/* Settings button moved to Profile */}
 
-          {/* Account / Cross-Link Placeholder */}
+          {/* Account / Profile Button */}
           <button
             className="icon-button"
             onClick={() => {
@@ -1373,10 +1358,7 @@ function App() {
                 window.location.href = `${baseUrl}?${params.toString()}`;
               } else {
                 if (user) {
-                  // If logged in, maybe show a menu? For now, just confirm logout
-                  if (confirm(`Logged in as ${user.email}. Sign out?`)) {
-                    logout();
-                  }
+                  setIsProfileOpen(true);
                 } else {
                   signInWithGoogle();
                 }
@@ -1398,7 +1380,12 @@ function App() {
             title={currentConfig.mode === 'idealtime' ? (user ? `Signed in as ${user.email}` : 'Sign In') : 'The Ideal Time'}
           >
             {currentConfig.mode === 'idealtime' ? (
-              <User size={18} />
+              // Show Initials or Icon
+              user && user.photoURL ? (
+                <img src={user.photoURL} style={{ width: '22px', height: '22px', borderRadius: '50%', border: isPremium ? '1px solid #fbbf24' : 'none' }} alt="User" />
+              ) : (
+                <User size={18} color={isPremium ? '#fbbf24' : undefined} />
+              )
             ) : (
               <img src="/tit-logo.png" style={{ width: '18px', height: '18px' }} alt="TIT" />
             )}
@@ -1414,6 +1401,14 @@ function App() {
         settings={settings}
         onUpdate={updateSettings}
       />
+
+      {isProfileOpen && (
+        <ProfileDialog
+          onClose={() => setIsProfileOpen(false)}
+          onOpenSettings={() => setIsSettingsOpen(true)}
+          onOpenFeedback={() => alert("Feedback form coming soon!")}
+        />
+      )}
 
       {/* Manager Modal (Lists activities) */}
       {isActivityBuilderOpen && !editingActivity && !activities.find(a => a.id === 'NEW_HACK') /* Dirty hacks to reuse boolean, let's fix this properly */}
@@ -1459,7 +1454,15 @@ function App() {
             setActivities(newOrder);
             await activityStore.reorder(newOrder, user?.uid);
           }}
-          onSync={handleSync}
+          onSync={() => {
+            if (!isPremium) {
+              alert("Calendar Sync is a Pro feature. Upgrade to enable!");
+              setIsManagerOpen(false);
+              setIsProfileOpen(true);
+              return;
+            }
+            handleSync();
+          }}
           isSyncing={isSyncing}
           userId={user?.uid}
         />
