@@ -200,13 +200,17 @@ function App() {
           calculateActivityScore(activity, pt, currentLocation.latitude, currentLocation.longitude)
         );
 
+        const isStaging = window.location.hostname.includes('staging') || window.location.hostname.includes('web.app');
+        const baseUrl = isStaging ? 'https://staging.theidealtime.com' : 'https://theidealtime.com';
+
         const blocks = generateCalendarBlocks(
           activity,
           weatherData,
           scores,
           currentLocation.latitude,
           currentLocation.longitude,
-          currentLocation.name
+          currentLocation.name,
+          baseUrl
         );
 
         // Determine specific location name for the *Invite*
