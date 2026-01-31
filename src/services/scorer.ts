@@ -127,12 +127,12 @@ const evaluateWeatherCondition = (condition: WeatherCondition, point: WeatherPoi
     }
 };
 
-const evaluateTimeCondition = (c: TimeCondition, point: WeatherPoint, lat: number, lon: number): boolean => {
+const evaluateTimeCondition = (c: TimeCondition, point: WeatherPoint, lat: number, lon: number): { pass: boolean; info?: string } => {
     // 1. Day Check
     const day = point.timestamp.getDay(); // 0 = Sun
     const isWeekend = day === 0 || day === 6;
-    if (c.days === 'weekdays' && isWeekend) return false;
-    if (c.days === 'weekends' && !isWeekend) return false;
+    if (c.days === 'weekdays' && isWeekend) return { pass: false, info: 'Weekend' };
+    if (c.days === 'weekends' && !isWeekend) return { pass: false, info: 'Weekday' };
 
     // 2. Time Check
     if (c.subType === 'range') {
@@ -149,7 +149,8 @@ const evaluateTimeCondition = (c: TimeCondition, point: WeatherPoint, lat: numbe
             insideRange = h >= start || h <= end;
         }
 
-        return operator === 'outside' ? !insideRange : insideRange;
+        const pass = operator === 'outside' ? !insideRange : insideRange;
+        return { pass, info: `Hour: ${h}` };
     } else if (c.subType === 'event' && c.event) {
         // Event Relative calculation (e.g. Sunset +/- 1hr)
         const times = SunCalc.getTimes(point.timestamp, lat, lon);
@@ -166,10 +167,11 @@ const evaluateTimeCondition = (c: TimeCondition, point: WeatherPoint, lat: numbe
 
         if (eventTime && !isNaN(eventTime.getTime())) {
             const diffHours = Math.abs(point.timestamp.getTime() - eventTime.getTime()) / (1000 * 60 * 60);
-            const allowedOffset = c.offsetHours ?? 1;
-            return diffHours <= allowedOffset;
+            const allowedOffset = !isNaN(Number(c.offsetHours)) ? Number(c.offsetHours) : 1;
+            const pass = diffHours <= allowedOffset;
+            return { pass, info: `Diff: ${diffHours.toFixed(2)}h vs ${allowedOffset}h` };
         }
-        return false; // Event data missing for this day
+        return { pass: false, info: ' Event missing' }; // Event data missing for this day
     } else if (c.subType === 'daylight') {
         // Daylight with buffer
         // "Day Time" = Between Sunrise and Sunset
@@ -185,10 +187,10 @@ const evaluateTimeCondition = (c: TimeCondition, point: WeatherPoint, lat: numbe
         const isDay = now >= sunrise && now <= sunset;
 
         const mode = c.daylightMode || 'day';
-        if (mode === 'day') return isDay;
-        else return !isDay;
+        if (mode === 'day') return { pass: isDay, info: isDay ? 'Day' : 'Night' };
+        else return { pass: !isDay, info: !isDay ? 'Night' : 'Day' };
     }
-    return true;
+    return { pass: true };
 };
 
 const evaluateCondition = (condition: Condition, point: WeatherPoint, lat: number, lon: number, allPoints?: WeatherPoint[], index?: number): { pass: boolean; label: string } => {
@@ -199,12 +201,13 @@ const evaluateCondition = (condition: Condition, point: WeatherPoint, lat: numbe
         if (wc.duration) label += ` (last ${wc.duration}h)`;
         return { pass, label };
     } else {
-        const pass = evaluateTimeCondition(condition as TimeCondition, point, lat, lon);
+        const res = evaluateTimeCondition(condition as TimeCondition, point, lat, lon);
         const tc = condition as TimeCondition;
-        const label = tc.subType === 'range'
+        const baseLabel = tc.subType === 'range'
             ? `Time: ${tc.startHour}-${tc.endHour}`
             : `${tc.event} +/- ${tc.offsetHours}h`;
-        return { pass, label };
+
+        return { pass: res.pass, label: `${baseLabel} (${res.info})` };
     }
 };
 
