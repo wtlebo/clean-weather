@@ -1,9 +1,15 @@
 import React, { useMemo, useState, useCallback, useEffect } from 'react';
-import { Settings } from 'lucide-react';
-import { getMoonData } from './utils/moon';
+import { Settings, ChevronLeft, ChevronRight, User } from 'lucide-react';
+import { getMoonData, getMoonPosition } from './utils/moon';
 import { MoonPhaseRow } from './components/charts/MoonPhaseRow';
+import { getSunPosition } from './utils/sun';
+import { useAuth } from './contexts/AuthContext';
+import SunCalc from 'suncalc';
+import type { TideEvent } from './types/weather';
+import { currentConfig } from './config/appConfig';
 
 import { TimelineContainer, type TimelineHandle } from './components/layout/TimelineContainer';
+import { decodeShareData } from './utils/sharing';
 
 import { TimeAxis } from './components/layout/TimeAxis';
 import { WeatherPanel } from './components/panels/WeatherPanel';
@@ -25,18 +31,43 @@ import { fetchWeatherData } from './services/api';
 import type { LocationResult } from './services/api';
 import { LocationSearch } from './components/LocationSearch';
 import { StatusIndicator } from './components/StatusIndicator';
+import { ActivityBuilder } from './components/activities/ActivityBuilder';
 import { ShareButton } from './components/ShareButton';
-import { serializeSettings, parseSettings, serializeLocation, parseLocation, mergeSettings } from './utils/url';
+import { serializeSettings, parseSettings, serializeLocation, parseLocation } from './utils/url';
 import './App.css';
 
 // Configuration
+import { ActivityManager } from './components/activities/ActivityManager';
+import { ActivityRow } from './components/charts/ActivityRow';
+import { activityStore } from './services/activityStore';
+import { settingsStore } from './services/settingsStore';
+import type { Activity } from './types/activity';
+import { GoogleCalendarService } from './services/calendar/googleCalendar';
+import { generateCalendarBlocks } from './utils/scheduler';
+import { calculateActivityScore } from './services/scorer';
+import { PrivacyPolicy } from './components/PrivacyPolicy';
+import { TermsOfService } from './components/TermsOfService';
+
 const HOURS = 240; // 10 days
 const DEFAULT_HOUR_WIDTH = 10; // px - Condensed for mobile
 const START_OFFSET = 120; // 5 days back
 
 function App() {
+  // Simple Routing
+  if (window.location.pathname === '/privacy') {
+    return <PrivacyPolicy />;
+  }
+  if (window.location.pathname === '/terms') {
+    return <TermsOfService />;
+  }
+
   // Scale state for pinch-to-zoom
   const [hourWidth, setHourWidth] = useState(DEFAULT_HOUR_WIDTH);
+
+  // UI State for Activity Manager
+  const [isManagerOpen, setIsManagerOpen] = useState(false);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [pendingSync, setPendingSync] = useState(false); // Track if user wanted to sync but needed login
 
   // Data & State
   // Default Location: New York (or load from URL, then storage)
@@ -61,47 +92,169 @@ function App() {
       longitude: -74.00597,
       elevation: 10,
       country_code: "US",
+      admin1: "NY",
       timezone: "America/New_York"
     };
   });
 
   const [weatherData, setWeatherData] = useState<WeatherPoint[]>([]);
   const [tideStation, setTideStation] = useState<{ name: string; distance: number; alertThreshold?: number } | null>(null);
+  const [tideHighLows, setTideHighLows] = useState<TideEvent[]>([]); // Added
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  const { user, signInWithGoogle, logout, isPremium, googleToken } = useAuth();
   const [lastFetchTime, setLastFetchTime] = useState<Date | null>(null);
   const [currentTime, setCurrentTime] = useState(new Date());
 
-  const [settings, setSettings] = useState<AppSettings>(() => {
-    // 1. Try URL
-    const params = new URLSearchParams(window.location.search);
-    // Determine if URL actually has settings? Check for 'u' or 'charts' or 't_opt'
-    if (params.has('u') || params.has('charts') || params.has('t_opt')) {
-      return parseSettings(params);
+  // Load activities based on Auth state
+  useEffect(() => {
+    const loadActivities = async () => {
+      let data = await activityStore.getAll(user?.uid);
+
+      // Auto-Migration: If logged in, but cloud is empty, try migrating local
+      if (user?.uid && data.length === 0) {
+        await activityStore.migrateLocalToCloud(user.uid);
+        data = await activityStore.getAll(user.uid); // Fetch again
+      }
+
+      // If fetched from cloud, they might need sorting by 'sortOrder' if we implemented that.
+      // For now, let's just use them as returned (which might be random order).
+      // To fix order, we should sort by sortOrder on fetch.
+      const sorted = user ? data.sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) : data;
+      setActivities(sorted);
+      setActivitiesLoaded(true);
+    };
+    loadActivities();
+  }, [user]);
+
+  // Initial Load (already handled by useEffect above, so we can init empty)
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [activitiesLoaded, setActivitiesLoaded] = useState(false); // Track loading state
+  const [editingActivity, setEditingActivity] = useState<Activity | undefined>(undefined);
+
+  const [settings, setSettings] = useState<AppSettings>(DEFAULT_SETTINGS);
+
+  // Load Settings on Auth Change
+  useEffect(() => {
+    const loadSettings = async () => {
+      // Just like activities, try migrate if logging in
+      if (user?.uid) {
+        await settingsStore.migrateLocalToCloud(user.uid);
+      }
+      const saved = await settingsStore.get(user?.uid);
+
+      // Merge with URL params if present (URL takes precedence for sharing)
+      const params = new URLSearchParams(window.location.search);
+      if (params.has('u') || params.has('charts')) {
+        const urlSettings = parseSettings(params);
+        setSettings({ ...saved, ...urlSettings });
+      } else {
+        setSettings(saved);
+      }
+    };
+    loadSettings();
+  }, [user]);
+
+  // Wrapper to save settings
+  const updateSettings = (val: AppSettings | ((prev: AppSettings) => AppSettings)) => {
+    setSettings(prev => {
+      const next = typeof val === 'function' ? val(prev) : val;
+      settingsStore.save(next, user?.uid);
+      return next;
+    });
+  };
+
+  // Calendar Sync
+  const handleSync = async () => {
+    if (!googleToken) {
+      try {
+        setPendingSync(true); // Mark intent
+        await signInWithGoogle();
+        return;
+      } catch (e) {
+        setPendingSync(false);
+        alert('Sign in failed to authorize calendar access.');
+        return;
+      }
     }
 
-    // 2. Try Storage
+    setIsSyncing(true);
     try {
-      const saved = localStorage.getItem('weather_settings');
-      if (saved) return mergeSettings(JSON.parse(saved));
-    } catch (e) {
-      console.error('Failed to load settings', e);
+      const service = new GoogleCalendarService(googleToken);
+      const calendarId = await service.ensureCalendar();
+
+      // Time Range: Now to 10 days out
+      const start = new Date();
+      const end = new Date();
+      end.setDate(end.getDate() + 10);
+
+      // 1. Clear Existing Events in range
+      const existingEvents = await service.getEvents(calendarId, start, end);
+      await Promise.all(existingEvents.map(e => service.deleteEvent(calendarId, e.id)));
+
+      // 2. Add New Ideal Blocks
+      let totalEvents = 0;
+      for (const activity of activities) { // activityStore.getAll result
+        const scores = weatherData.map(pt =>
+          calculateActivityScore(activity, pt, currentLocation.latitude, currentLocation.longitude)
+        );
+
+        const blocks = generateCalendarBlocks(
+          activity,
+          weatherData,
+          scores,
+          currentLocation.latitude,
+          currentLocation.longitude,
+          currentLocation.name
+        );
+
+        for (const block of blocks) {
+          await service.createEvent(calendarId, {
+            summary: block.summary,
+            description: block.description,
+            start: block.start,
+            end: block.end
+          });
+          totalEvents++;
+        }
+      }
+
+      if (totalEvents === 0) {
+        alert('Sync Complete: No "Ideal" times found in the next 10 days for your activities.');
+      } else {
+        alert(`Sync Complete: Successfully added ${totalEvents} events to "The Ideal Time" calendar.`);
+      }
+    } catch (e: any) {
+      console.error("Sync Error", e);
+      alert(`Sync Failed: ${e.message}`);
+    } finally {
+      setIsSyncing(false);
     }
-    return DEFAULT_SETTINGS;
-  });
+  };
+
+  // Auto-Sync after Login
+  useEffect(() => {
+    if (googleToken && pendingSync) {
+      setPendingSync(false);
+      handleSync();
+    }
+  }, [googleToken, pendingSync]);
+
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isActivityBuilderOpen, setIsActivityBuilderOpen] = useState(false);
   const timelineRef = React.useRef<TimelineHandle>(null);
 
   // URL Synchronization
   useEffect(() => {
-    // Debounce or just update? replaceState is cheap-ish.
-    const params = new URLSearchParams();
+    // Initialize with current params to preserve 'share', 'import_*', etc.
+    const params = new URLSearchParams(window.location.search);
 
-    // Add Loc Params
+    // Update/Overwrite Loc Params
     const locParams = serializeLocation(currentLocation);
     locParams.forEach((v, k) => params.set(k, v));
 
-    // Add Settings Params
+    // Update/Overwrite Settings Params
     const setParams = serializeSettings(settings);
     setParams.forEach((v, k) => params.set(k, v));
 
@@ -124,13 +277,14 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const { points, tideStation, fetchedAt } = await fetchWeatherData(
+      const { points, tideStation, tideHighLows, fetchedAt } = await fetchWeatherData(
         currentLocation.latitude,
         currentLocation.longitude,
         forceRefresh
       );
       setWeatherData(points);
       setTideStation(tideStation);
+      setTideHighLows(tideHighLows || []);
       // If we forced a refresh, fetchedAt should be new.
       setLastFetchTime(fetchedAt ? new Date(fetchedAt) : new Date());
     } catch (err) {
@@ -222,16 +376,21 @@ function App() {
         speed = speed * 0.44704;
         if (gust) gust = gust * 0.44704;
         // mm -> mm (No change)
-        // Tide Metric (already meters)
-        // Wave/Swell Metric (already meters)
+
+        // Tide: Base is Feet (from NOAA 'english'). Convert to Meters.
+        if (tide !== null) tide = tide * 0.3048;
+
+        // Wave/Swell: Base is Meters (from OpenMeteo). No change.
       } else {
         // Imperial
         // F -> F
         // mph -> mph
         // mm -> in
         precip = precip / 25.4;
-        // Meters -> Feet
-        if (tide !== null) tide = tide * 3.28084;
+
+        // Tide: Base is Feet. No change.
+
+        // Marine: Base is Meters. Convert to Feet.
         if (wave !== null) wave = wave * 3.28084;
         if (swell !== null) swell = swell * 3.28084;
         if (waterTemp !== null) waterTemp = (waterTemp * 9 / 5) + 32;
@@ -519,14 +678,110 @@ function App() {
         return <div style={boxStyle}><p style={{ color: '#aecbfa', margin: 0 }}>Cover: {Math.round(data.cloudCover * 100)}%</p></div>;
       case 'tide':
         if (data.tideHeight === null || data.tideHeight === undefined) return null;
-        return <div style={boxStyle}><p style={{ color: '#fff', margin: 0 }}>Tide: {data.tideHeight.toFixed(2)}{unitLabels.tide}</p></div>;
+
+        // Find High/Low events near this timestamp (within 45 mins)
+        let tideEventLabel: string | null = null;
+        let tideEventHeight: string | null = null;
+
+        // Filter events that match the day/hour approximation
+        // Actually, we can check proximity directly.
+        // We only want to show the event if the selected hour is the closest hour to the event.
+        const nearbyTide = tideHighLows.find(e => Math.abs(e.timestamp.getTime() - data.timestamp.getTime()) < 45 * 60 * 1000);
+
+        if (nearbyTide) {
+          const timeStr = nearbyTide.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+          const typeStr = nearbyTide.type === 'high' ? 'High Tide' : 'Low Tide';
+          tideEventLabel = `${typeStr} at ${timeStr}`;
+
+          // Format Height based on units
+          let h = nearbyTide.height;
+          // Base is Feet.
+          if (settings.units === 'imperial') {
+            tideEventHeight = `${h.toFixed(1)}ft`;
+          } else {
+            // Convert to Meters
+            h = h * 0.3048;
+            tideEventHeight = `${h.toFixed(2)}m`;
+          }
+        }
+
+        return (
+          <div style={boxStyle}>
+            {tideEventLabel ? (
+              <>
+                <p style={{ color: '#fff', margin: 0, fontWeight: 'bold' }}>{tideEventLabel}</p>
+                <p style={{ color: '#aaa', margin: 0 }}>Height: {tideEventHeight}</p>
+              </>
+            ) : (
+              <p style={{ color: '#fff', margin: 0 }}>Tide: {data.tideHeight.toFixed(2)}{unitLabels.tide}</p>
+            )}
+          </div>
+        );
 
       case 'moon':
         const moon = getMoonData(data.timestamp);
+        const moonPos = getMoonPosition(data.timestamp, currentLocation.latitude, currentLocation.longitude);
+
+        // Check for Moon Rise/Set within 45 mins (since data is hourly, +/- 30 might miss if event is at :31)
+        // Actually, typically we associate the event with the closes hour.
+        const mTimes = SunCalc.getMoonTimes(data.timestamp, currentLocation.latitude, currentLocation.longitude);
+        let moonEventLabel: string | null = null;
+
+        if (mTimes.rise) {
+          const diff = Math.abs(data.timestamp.getTime() - mTimes.rise.getTime());
+          if (diff < 45 * 60 * 1000) {
+            moonEventLabel = `Moonrise at ${mTimes.rise.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+          }
+        }
+        if (mTimes.set && !moonEventLabel) {
+          const diff = Math.abs(data.timestamp.getTime() - mTimes.set.getTime());
+          if (diff < 45 * 60 * 1000) {
+            moonEventLabel = `Moonset at ${mTimes.set.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+          }
+        }
+
         return (
           <div style={boxStyle}>
             <p style={{ color: '#fff', margin: 0 }}>{moon.label}</p>
             <p style={{ color: '#aaa', margin: 0 }}>{Math.round(moon.fraction * 100)}% Illuminated</p>
+            <div style={{ height: '1px', backgroundColor: '#444', margin: '4px 0' }} />
+            {moonEventLabel ? (
+              <p style={{ color: '#fbbf24', margin: 0, fontWeight: 'bold' }}>{moonEventLabel}</p>
+            ) : (
+              <p style={{ color: '#ccc', margin: 0 }}>Altitude: {Math.round(moonPos.altitude)}°</p>
+            )}
+            <p style={{ color: '#888', margin: 0, fontSize: '10px' }}>Azimuth: {Math.round(moonPos.azimuth)}°</p>
+          </div>
+        );
+      case 'sun':
+        const sunPos = getSunPosition(data.timestamp, currentLocation.latitude, currentLocation.longitude);
+
+        // Check Sun Rise/Set
+        const sTimes = SunCalc.getTimes(data.timestamp, currentLocation.latitude, currentLocation.longitude);
+        let sunEventLabel: string | null = null;
+
+        if (sTimes.sunrise) {
+          const diff = Math.abs(data.timestamp.getTime() - sTimes.sunrise.getTime());
+          if (diff < 45 * 60 * 1000) {
+            sunEventLabel = `Sunrise at ${sTimes.sunrise.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+          }
+        }
+        if (sTimes.sunset && !sunEventLabel) {
+          const diff = Math.abs(data.timestamp.getTime() - sTimes.sunset.getTime());
+          if (diff < 45 * 60 * 1000) {
+            sunEventLabel = `Sunset at ${sTimes.sunset.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+          }
+        }
+
+        return (
+          <div style={boxStyle}>
+            {sunEventLabel ? (
+              <p style={{ color: '#fbbf24', margin: 0, fontWeight: 'bold' }}>{sunEventLabel}</p>
+            ) : (
+              <p style={{ color: '#fbbf24', margin: 0 }}>Sun Altitude: {Math.round(sunPos.altitude)}°</p>
+            )}
+            <p style={{ color: '#aaa', margin: 0 }}>Azimuth: {Math.round(sunPos.azimuth)}°</p>
+            <p style={{ color: '#ccc', margin: 0, fontSize: '10px' }}>{sunPos.isUp ? 'Day' : 'Night'}</p>
           </div>
         );
       case 'waterTemp':
@@ -592,20 +847,25 @@ function App() {
           <WeatherPanel
             key="moon"
             title="Moon"
-            height={40} // Tighter height
+            height={80} // Doubled height
             axis={
               <StickyAxis
                 domain={[0, 1]}
-                ticks={[0, 1]}
-                height={40}
-                tickFormatter={(v: number) => v === 0 ? 'New' : 'Full'}
+                ticks={[0, 0.5, 1]}
+                height={80}
+                tickFormatter={(v: number) => {
+                  if (v === 0) return '0%';
+                  if (v === 0.5) return '50%';
+                  return '100%';
+                }}
                 margin={{ top: 0, right: 0, left: 0, bottom: 0 }}
                 tick={({ x, y, payload }: any) => {
                   // Custom Tick to fix clipping at edges
                   const isFull = payload.value === 1;
                   const isNew = payload.value === 0;
-                  // Shift Full (Top) DOWN, New (Bottom) UP (less than before)
-                  // User wanted to lower "New" significantly. Was -8. Try -2.
+                  const isHalf = payload.value === 0.5;
+
+                  // Shift Full (Top) DOWN, New (Bottom) UP
                   const dy = isFull ? 8 : (isNew ? -2 : 3);
 
                   return (
@@ -618,7 +878,7 @@ function App() {
                       fontSize={9}
                       fontWeight={500}
                     >
-                      {payload.value === 0 ? 'NEW' : 'FULL'}
+                      {isHalf ? '50%' : (isNew ? '0%' : '100%')}
                     </text>
                   );
                 }}
@@ -634,6 +894,7 @@ function App() {
               lat={currentLocation.latitude}
               lon={currentLocation.longitude}
               nowIndex={nowIndex}
+              height={80}
             />
           </WeatherPanel>
         );
@@ -703,10 +964,16 @@ function App() {
         return (
           <WeatherPanel
             key="sky"
-            title="Sky Cover (%)"
+            title={<span><span style={{ color: '#fbbf24' }}>Sun</span> & Sky Cover (%)</span>}
             height={commonHeight}
             axis={<StickyAxis domain={[0, 1]} ticks={precipTicks} height={commonHeight} tickFormatter={(v: number) => `${Math.round(v * 100)}`} />}
-            tooltip={selectedData ? getTooltipContent('sky', selectedData) : null}
+            // Combine Tooltips: Sky Cover + Sun Altitude
+            tooltip={selectedData ? (
+              <>
+                {getTooltipContent('sky', selectedData)}
+                {getTooltipContent('sun', selectedData)}
+              </>
+            ) : null}
             tooltipLeft={tooltipLeft}
           >
             <SkyCoverChart
@@ -716,6 +983,8 @@ function App() {
               syncId={syncId}
               ticks={precipTicks}
               nowIndex={nowIndex}
+              lat={currentLocation.latitude}
+              lon={currentLocation.longitude}
             />
           </WeatherPanel>
         );
@@ -759,7 +1028,7 @@ function App() {
               nowIndex={nowIndex}
               alertThreshold={
                 tideStation?.alertThreshold !== undefined
-                  ? (settings.units === 'metric' ? tideStation.alertThreshold : tideStation.alertThreshold * 3.28084)
+                  ? (settings.units === 'metric' ? tideStation.alertThreshold * 0.3048 : tideStation.alertThreshold)
                   : undefined
               }
               showHighLow={settings.tide?.showHighLow}
@@ -872,31 +1141,186 @@ function App() {
     }
   };
 
+  // Dynamic Branding (Title & Favicon)
+  useEffect(() => {
+    document.title = currentConfig.appName;
+    const link = document.querySelector("link[rel~='icon']") as HTMLLinkElement;
+    if (link) {
+      link.href = currentConfig.mode === 'idealtime' ? '/tit-logo.png' : '/weather-plot-favicon.svg';
+    }
+  }, []);
+
+  // Hydrate from URL params (Cross-Site Sync & Sharing)
+  useEffect(() => {
+    // Wait for activities to check for conflicts (prevents overwrite)
+    if (!activitiesLoaded) return;
+
+    const params = new URLSearchParams(window.location.search);
+    let dirty = false;
+
+    // 1. Cross-Site Sync Params
+    const lat = params.get('import_lat');
+    const lon = params.get('import_lon');
+
+    if (lat && lon) {
+      console.log('[Hydration] Found Import Params');
+      const newLoc: LocationResult = {
+        id: 0,
+        elevation: 0,
+        name: params.get('import_name') || 'Imported Location',
+        latitude: parseFloat(lat),
+        longitude: parseFloat(lon),
+        admin1: params.get('import_admin1') || undefined,
+        country_code: params.get('import_country') || '',
+        timezone: params.get('import_tz') ?? 'UTC',
+      };
+
+      // Delay slightly to ensure app is ready
+      setTimeout(() => setCurrentLocation(newLoc), 50);
+
+      const units = params.get('import_units');
+      if (units && (units === 'imperial' || units === 'metric')) {
+        updateSettings(prev => ({ ...prev, units: units as 'imperial' | 'metric' }));
+      }
+      dirty = true;
+    }
+
+    // 2. Share Link (Full Activity + Location)
+    const shareParam = params.get('share');
+    if (shareParam) {
+      console.log('[Hydration] Found Share Param');
+      try {
+        const data = decodeShareData(shareParam);
+        console.log('[Hydration] Decoded:', data);
+
+        if (data) {
+          if (data.location) {
+            const newLoc: LocationResult = {
+              id: 0,
+              elevation: 0,
+              name: data.location.name,
+              latitude: data.location.lat,
+              longitude: data.location.lon,
+              admin1: data.location.admin1,
+              country_code: data.location.country || '',
+              timezone: 'UTC'
+            };
+            console.log('[Hydration] Setting Location:', newLoc);
+            setTimeout(() => setCurrentLocation(newLoc), 100); // 100ms delay to override any defaults
+          }
+
+          if (data.activity) {
+            console.log('[Hydration] Setting Activity:', data.activity.name);
+            setActivities(prev => {
+              console.log('[Hydration] Current Activities:', prev);
+
+              // If same activity exists (by name), assume it's already there (maybe user refreshed)
+              // UPDATE: Actually, let's allow overwrite if they explicitly shared it. 
+              // But for now, let's keep duplicate check but log it.
+              const exists = prev.find(a => a.name === data.activity!.name);
+              if (exists) {
+                console.log('[Hydration] Activity already exists:', exists.name);
+                // For now, let's NOT return early, let's ask if they want to overwrite?
+                // Or just select it?
+                // Let's simpler: If exists, do nothing? (User might be confused why it didn't update)
+                // Let's ask to overwrite.
+              }
+
+              if (prev.length > 0) {
+                // Synchronous confirm (blocks UI paint, but works for logic)
+                // We need to use a short timeout ONLY if we want UI to paint "Loading" or something, 
+                // but here we just want logic working.
+                if (confirm(`Import shared activity "${data.activity?.name}"? This will overwrite your current list.`)) {
+                  return [data.activity!];
+                }
+                return prev;
+              }
+              return [data.activity!];
+            });
+          }
+          dirty = true;
+        }
+      } catch (e) {
+        console.error('[Hydration] Error decoding share:', e);
+      }
+    }
+
+    // Clean URL if we processed anything
+    if (dirty) {
+      window.history.replaceState({}, '', window.location.pathname);
+    }
+  }, [activitiesLoaded]);
+
   return (
     <div className="app-container" onWheel={handleWheel}>
       <header className="app-header">
-        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Logo */}
+          <img
+            src={currentConfig.mode === 'idealtime' ? '/tit-logo.png' : '/weather-plot-favicon.svg'}
+            alt={`${currentConfig.appName} Logo`}
+            style={{ height: '36px', width: '36px', cursor: 'pointer' }}
             onClick={() => timelineRef.current?.scrollToNow()}
-          >
-            <img src="/weather-plot-favicon.svg" alt="Weather Plot Logo" style={{ height: '32px', width: '32px' }} />
-            <h1 style={{ fontSize: '1.2rem', fontWeight: 600, margin: 0, color: '#fff' }}>Weather Plot</h1>
-          </div>
-          <div style={{ width: '1px', height: '24px', backgroundColor: '#333' }}></div>
-          <LocationSearch
-            currentLocationName={currentLocation.name}
-            onLocationSelect={setCurrentLocation}
           />
+
+          {/* Title Stack */}
+          <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+            <h1
+              onClick={() => timelineRef.current?.scrollToNow()}
+              style={{
+                margin: 0,
+                fontSize: '16px',
+                fontWeight: 600,
+                cursor: 'pointer',
+                userSelect: 'none',
+                WebkitUserSelect: 'none',
+                color: '#fff',
+                lineHeight: 1.2,
+                whiteSpace: 'nowrap'
+              }}
+            >{currentConfig.appName}</h1>
+
+            <LocationSearch
+              currentLocationName={`${currentLocation.name}${currentLocation.admin1 ? `, ${currentLocation.admin1}` : (currentLocation.country_code ? `, ${currentLocation.country_code}` : '')}`}
+              onLocationSelect={setCurrentLocation}
+            />
+          </div>
         </div>
         <div className="header-controls">
+          {currentConfig.features.activityBuilder && (
+            <button
+              className="icon-button"
+              onClick={() => setIsManagerOpen(true)}
+              style={{
+                background: 'rgba(16, 185, 129, 0.2)', // Green tint
+                border: '1px solid rgba(16, 185, 129, 0.4)',
+                cursor: 'pointer',
+                color: '#10b981',
+                padding: '4px 6px',
+                borderRadius: '4px',
+                fontSize: '12px',
+                fontWeight: 600,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}
+            >
+              Activities
+            </button>
+          )}
+
           <StatusIndicator
             lastFetchTime={lastFetchTime}
             currentTime={currentTime}
             onRefresh={() => loadData(true)}
             isLoading={loading}
           />
-          <ShareButton />
+
+          <ShareButton
+            currentLocation={currentLocation}
+            activity={activities.length > 0 ? activities[0] : undefined}
+            mode={currentConfig.mode}
+          />
           <button
             className="icon-button"
             onClick={() => setIsSettingsOpen(true)}
@@ -913,8 +1337,61 @@ function App() {
             }}
             onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
             onMouseLeave={(e) => e.currentTarget.style.color = '#888'}
+            title="Settings"
           >
             <Settings size={18} />
+          </button>
+
+          {/* Account / Cross-Link Placeholder */}
+          <button
+            className="icon-button"
+            onClick={() => {
+              if (currentConfig.mode === 'weatherplot') {
+                const isStaging = window.location.hostname.includes('staging') || window.location.hostname.includes('web.app');
+                const baseUrl = isStaging ? 'https://staging.theidealtime.com' : 'https://theidealtime.com';
+
+                // Pack state
+                const params = new URLSearchParams();
+                params.set('import_lat', currentLocation.latitude.toString());
+                params.set('import_lon', currentLocation.longitude.toString());
+                params.set('import_name', currentLocation.name);
+                if (currentLocation.admin1) params.set('import_admin1', currentLocation.admin1);
+                if (currentLocation.country_code) params.set('import_country', currentLocation.country_code);
+                if (currentLocation.timezone) params.set('import_tz', currentLocation.timezone);
+                params.set('import_units', settings.units);
+
+                window.location.href = `${baseUrl}?${params.toString()}`;
+              } else {
+                if (user) {
+                  // If logged in, maybe show a menu? For now, just confirm logout
+                  if (confirm(`Logged in as ${user.email}. Sign out?`)) {
+                    logout();
+                  }
+                } else {
+                  signInWithGoogle();
+                }
+              }
+            }}
+            style={{
+              background: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              color: user ? '#10b981' : '#888', // Green if logged in
+              padding: '4px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'color 0.2s'
+            }}
+            onMouseEnter={(e) => e.currentTarget.style.color = '#fff'}
+            onMouseLeave={(e) => e.currentTarget.style.color = user ? '#10b981' : '#888'}
+            title={currentConfig.mode === 'idealtime' ? (user ? `Signed in as ${user.email}` : 'Sign In') : 'The Ideal Time'}
+          >
+            {currentConfig.mode === 'idealtime' ? (
+              <User size={18} />
+            ) : (
+              <img src="/tit-logo.png" style={{ width: '18px', height: '18px' }} alt="TIT" />
+            )}
           </button>
         </div>
       </header>
@@ -925,8 +1402,81 @@ function App() {
         open={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
         settings={settings}
-        onUpdate={setSettings}
+        onUpdate={updateSettings}
       />
+
+      {/* Manager Modal (Lists activities) */}
+      {isActivityBuilderOpen && !editingActivity && !activities.find(a => a.id === 'NEW_HACK') /* Dirty hacks to reuse boolean, let's fix this properly */}
+
+      {/* 
+        Refactoring Logic:
+        We used `isActivityBuilderOpen` for the builder.
+        Now we have a Manager AND a Builder.
+        Let's split the state or handle the logic carefully.
+        
+        State:
+        - isManagerOpen (List)
+        - isBuilderOpen (Edit/Create)
+        
+        Button -> Opens Manager
+        Manager "Edit" -> Opens Builder (Manager stays? or Closes? Probably closes or hidden)
+        Manager "New" -> Opens Builder
+      */}
+
+      {isManagerOpen && (
+        <ActivityManager
+          activities={activities}
+          isPremium={isPremium}
+          onClose={() => setIsManagerOpen(false)}
+          onEdit={(activity) => {
+            setEditingActivity(activity);
+            setIsManagerOpen(false);
+            setIsActivityBuilderOpen(true);
+          }}
+          onDelete={async (id) => {
+            await activityStore.delete(id, user?.uid);
+            const updated = await activityStore.getAll(user?.uid);
+            const sorted = user ? updated.sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) : updated;
+            setActivities(sorted);
+          }}
+          onCreate={() => {
+            setEditingActivity(undefined);
+            setIsManagerOpen(false);
+            setIsActivityBuilderOpen(true);
+          }}
+          onReorder={async (newOrder) => {
+            // Optimistic update
+            setActivities(newOrder);
+            await activityStore.reorder(newOrder, user?.uid);
+          }}
+          onSync={handleSync}
+          isSyncing={isSyncing}
+          userId={user?.uid}
+        />
+      )}
+
+      {isActivityBuilderOpen && (
+        <ActivityBuilder
+          currentLocation={currentLocation}
+          existingActivity={editingActivity}
+          settings={settings}
+          onClose={() => {
+            setIsActivityBuilderOpen(false);
+            setEditingActivity(undefined);
+            setIsManagerOpen(true); // Return to list on close
+          }}
+          onSave={async (savedActivity) => {
+            await activityStore.save(savedActivity, user?.uid);
+            // Refresh
+            const updated = await activityStore.getAll(user?.uid);
+            const sorted = user ? updated.sort((a: any, b: any) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0)) : updated;
+            setActivities(sorted);
+            setIsActivityBuilderOpen(false);
+            setEditingActivity(undefined);
+            setIsManagerOpen(true); // Return to list on save
+          }}
+        />
+      )}
 
       {loading && <div className="loading-overlay">Loading Weather Data...</div>}
       {error && <div className="error-overlay">{error}</div>}
@@ -973,28 +1523,80 @@ function App() {
                 zIndex: 200,
                 pointerEvents: 'none',
               }}>
-                <div style={{
-                  position: 'sticky',
-                  top: '52px', // Y-Position: Sticks to top (adjusted up)
-                  left: 0, // Reset
-                  width: 'fit-content',
-                  transform: 'translateX(-50%)',
-                  backgroundColor: '#333',
-                  color: '#fff',
-                  padding: '4px 8px',
-                  borderRadius: '4px',
-                  fontSize: '12px',
-                  fontWeight: 'bold',
-                  border: '1px solid #555',
-                  marginTop: '4px',
-                  whiteSpace: 'nowrap'
-                }}>
-                  {new Intl.DateTimeFormat('en-US', {
-                    weekday: 'short',
-                    hour: 'numeric',
-                    minute: 'numeric',
-                    timeZone: currentLocation.timezone
-                  }).format(selectedData.timestamp)}
+                <div
+                  style={{
+                    position: 'sticky',
+                    top: '52px', // Moved down below typical axis height
+                    // left: tooltipLeft, // REMOVED: Wrapper already handles X position
+                    width: 'fit-content',
+                    transform: 'translateX(-50%)',
+                    zIndex: 100,
+                    backgroundColor: '#000',
+                    color: '#fff',
+                    padding: '4px 8px',
+                    borderRadius: '4px',
+                    fontSize: '12px',
+                    fontWeight: 'bold',
+                    whiteSpace: 'nowrap',
+                    marginTop: '8px',
+                    marginBottom: '8px',
+                    boxShadow: '0 2px 4px rgba(0,0,0,0.5)',
+                    border: '1px solid #444',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    pointerEvents: 'auto' // Re-enable clicks
+                  }}
+                  onClick={(e) => e.stopPropagation()} // Prevent dismissing when clicking the box itself
+                >
+                  {/* Left Arrow */}
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (selectedIndex !== null && selectedIndex > 0) {
+                        handleTimeSelect(selectedIndex - 1);
+                      }
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '0 4px',
+                      userSelect: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      opacity: selectedIndex! > 0 ? 1 : 0.3
+                    }}
+                  >
+                    <ChevronLeft size={16} />
+                  </div>
+
+                  <span>
+                    {new Intl.DateTimeFormat('en-US', {
+                      weekday: 'short',
+                      hour: 'numeric',
+                      minute: 'numeric',
+                      timeZone: currentLocation.timezone
+                    }).format(selectedData.timestamp)}
+                  </span>
+
+                  {/* Right Arrow */}
+                  <div
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (selectedIndex !== null && selectedIndex < weatherData.length - 1) {
+                        handleTimeSelect(selectedIndex + 1);
+                      }
+                    }}
+                    style={{
+                      cursor: 'pointer',
+                      padding: '0 4px',
+                      userSelect: 'none',
+                      display: 'flex',
+                      alignItems: 'center',
+                      opacity: selectedIndex! < weatherData.length - 1 ? 1 : 0.3
+                    }}
+                  >
+                    <ChevronRight size={16} />
+                  </div>
                 </div>
               </div>
             )}
@@ -1009,7 +1611,51 @@ function App() {
               timezone={currentLocation.timezone}
             />
 
+            {/* Activities: One Panel per Activity */}
+            {/* Activities: One Panel per Activity */}
+            {currentConfig.features.trafficLightPlot && activities.map(activity => (
+              <WeatherPanel
+                key={activity.id}
+                title={
+                  <div style={{ display: 'flex', alignItems: 'center', width: '100%' }}>
+                    <span style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      flex: 1,
+                      fontSize: '0.9em',
+                      color: '#ddd'
+                    }}
+                    >
+                      <span style={{ fontSize: '1.2em' }}>{activity.icon}</span>
+                      {activity.name.replace(/^ACTIVITY:?\s*/i, '')}
 
+                    </span>
+                  </div>
+                }
+                height={18}
+                axis={
+                  <div style={{
+                    width: '100%',
+                    height: '100%',
+                    borderRight: '1px solid #333',
+                    background: '#1e1e1e'
+                  }} />
+                }
+              >
+                <ActivityRow
+                  points={processedData}
+                  activity={activity}
+                  lat={currentLocation.latitude}
+                  lon={currentLocation.longitude}
+                  height={18}
+                  onEdit={() => {
+                    setEditingActivity(activity);
+                    setIsActivityBuilderOpen(true);
+                  }}
+                />
+              </WeatherPanel>
+            ))}
 
             {/* Panels */}
             {settings.chartOrder
@@ -1019,6 +1665,20 @@ function App() {
           </TimelineContainer>
         </main>
       )}
+
+      {/* Footer for Legal Links (Required for Google Verification) */}
+      <footer style={{
+        position: 'fixed',
+        bottom: '8px',
+        right: '12px',
+        fontSize: '10px',
+        color: '#444',
+        zIndex: 50,
+        pointerEvents: 'auto'
+      }}>
+        <a href="/privacy" style={{ color: '#444', textDecoration: 'none', marginRight: '8px' }}>Privacy</a>
+        <a href="/terms" style={{ color: '#444', textDecoration: 'none' }}>Terms</a>
+      </footer>
     </div>
   );
 }
