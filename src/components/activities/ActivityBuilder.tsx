@@ -578,7 +578,7 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
                 <div style={{ padding: '0 20px', marginBottom: '0', display: 'flex', alignItems: 'center', gap: '8px', borderBottom: '1px solid #333', background: '#1c1c1f', zIndex: 20 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#aaa', fontSize: '0.9rem', padding: '12px 0' }}>
                         <MapPin size={16} />
-                        <span>Analysis Location <span style={{ fontSize: '0.8em', opacity: 0.7 }}>(for calendar sync)</span>:</span>
+                        <span>Activity Location:</span>
                     </div>
                     <div style={{ transform: 'scale(1)', transformOrigin: 'left center' }}>
                         <LocationSearch
@@ -586,6 +586,7 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
                             onLocationSelect={setLocation}
                         />
                     </div>
+                    <span style={{ fontSize: '0.8em', opacity: 0.7, color: '#aaa' }}>(for calendar sync)</span>
                 </div>
 
                 {/* Info Panel Overlay */}
