@@ -66,7 +66,7 @@ function App() {
   const [hourWidth, setHourWidth] = useState(DEFAULT_HOUR_WIDTH);
 
   // Auth
-  const { user, signInWithGoogle, logout, googleToken, isPremium } = useAuth();
+  const { user, signInWithGoogle, googleToken, isPremium } = useAuth();
 
   // UI State for Activity Manager
   const [isManagerOpen, setIsManagerOpen] = useState(false);
