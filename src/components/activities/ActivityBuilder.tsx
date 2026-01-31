@@ -412,7 +412,22 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
                             {/* Duration for Accumulation */}
                             {isAccumulation && (
                                 <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px', width: '100%' }}>
-                                    <span style={{ color: '#aaa', fontSize: '0.9rem' }}>over the last</span>
+                                    <span style={{ color: '#aaa', fontSize: '0.9rem' }}>over the</span>
+                                    <select
+                                        value={(c as WeatherCondition).horizon || 'past'}
+                                        onChange={(e) => updateCondition(list, setter, c.id, { horizon: e.target.value as 'past' | 'future' })}
+                                        style={{
+                                            padding: '4px',
+                                            borderRadius: '4px',
+                                            background: '#222',
+                                            color: '#fff',
+                                            border: '1px solid #444',
+                                            fontSize: '0.9rem'
+                                        }}
+                                    >
+                                        <option value="past">LAST</option>
+                                        <option value="future">NEXT</option>
+                                    </select>
                                     <div style={{ position: 'relative' }}>
                                         <input
                                             type="number" min="0"
