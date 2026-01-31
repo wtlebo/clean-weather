@@ -579,35 +579,40 @@ export const ActivityBuilder: React.FC<ActivityBuilderProps> = ({ existingActivi
                 {/* Header */}
                 <div style={{ padding: '20px', borderBottom: '1px solid #333', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                     {/* Preset Loader (New) */}
+                    {/* Preset Loader */}
                     {!existingActivity && presets.length > 0 && (
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-                            <button
-                                onClick={() => setShowPresets(!showPresets)}
-                                style={{
-                                    display: 'flex', alignItems: 'center', gap: '6px',
-                                    background: '#3f3f46', color: '#fff', border: 'none',
-                                    padding: '6px 12px', borderRadius: '20px', fontSize: '0.85rem', cursor: 'pointer'
+                        <div style={{ marginBottom: '8px' }}>
+                            <select
+                                onChange={(e) => {
+                                    const selected = presets.find(p => p.id === e.target.value);
+                                    if (selected) handleLoadPreset(selected);
                                 }}
+                                style={{
+                                    width: '100%',
+                                    padding: '8px 12px',
+                                    borderRadius: '8px',
+                                    background: '#3f3f46',
+                                    color: '#fff',
+                                    border: '1px solid #555',
+                                    fontSize: '0.9rem',
+                                    cursor: 'pointer',
+                                    outline: 'none',
+                                    appearance: 'none', // Custom arrow maybe? 
+                                    backgroundImage: `url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%22292.4%22%20height%3D%22292.4%22%3E%3Cpath%20fill%3D%22%23FFFFFF%22%20d%3D%22M287%2069.4a17.6%2017.6%200%200%200-13-5.4H18.4c-5%200-9.3%201.8-12.9%205.4A17.6%2017.6%200%200%200%200%2082.2c0%205%201.8%209.3%205.4%2012.9l128%20127.9c3.6%203.6%207.8%205.4%2012.8%205.4s9.2-1.8%2012.8-5.4L287%2095c3.5-3.5%205.4-7.8%205.4-12.8%200-5-1.9-9.2-5.5-12.8z%22%2F%3E%3C%2Fsvg%3E")`,
+                                    backgroundRepeat: 'no-repeat',
+                                    backgroundPosition: 'right .7em top 50%',
+                                    backgroundSize: '.65em auto',
+                                    paddingRight: '2em' // Space for arrow
+                                }}
+                                defaultValue=""
                             >
-                                <BookOpen size={14} /> {showPresets ? 'Cancel' : 'Load a Preset Activity'}
-                            </button>
-                            {showPresets && (
-                                <div style={{ display: 'flex', gap: '8px', overflowX: 'auto', paddingBottom: '4px' }}>
-                                    {presets.map(p => (
-                                        <button
-                                            key={p.id}
-                                            onClick={() => handleLoadPreset(p)}
-                                            style={{
-                                                whiteSpace: 'nowrap', background: '#27272a', border: '1px solid #444', color: '#ccc',
-                                                padding: '4px 8px', borderRadius: '4px', cursor: 'pointer', fontSize: '0.8rem',
-                                                display: 'flex', alignItems: 'center', gap: '4px'
-                                            }}
-                                        >
-                                            <span>{p.icon}</span> {p.name}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
+                                <option value="" disabled>📚 Load a Preset Activity...</option>
+                                {presets.sort((a, b) => a.name.localeCompare(b.name)).map(p => (
+                                    <option key={p.id} value={p.id}>
+                                        {p.icon} {p.name}
+                                    </option>
+                                ))}
+                            </select>
                         </div>
                     )}
 
