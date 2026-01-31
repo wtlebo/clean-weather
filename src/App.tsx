@@ -209,10 +209,16 @@ function App() {
           currentLocation.name
         );
 
+        // Determine specific location name for the *Invite*
+        // Implementation Note: generateCalendarBlocks uses the coordinates for sun/moon,
+        // but the *Invite Location* should match what the user sees.
+        const eventLocation = activity.location ? activity.location.name : currentLocation.name;
+
         for (const block of blocks) {
           await service.createEvent(calendarId, {
             summary: block.summary,
             description: block.description,
+            location: eventLocation, // Pass location name
             start: block.start,
             end: block.end
           });
