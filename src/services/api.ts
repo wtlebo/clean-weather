@@ -1,5 +1,5 @@
-import type { WeatherPoint } from '../types/weather';
-import { fetchTidePredictions, findNearestStations, fetchStationDatums } from './noaa';
+import type { WeatherPoint, TideEvent } from '../types/weather';
+import { fetchTidePredictions, findNearestStations, fetchStationDatums, fetchTideHighLows } from './noaa';
 
 const GEOCODING_API = 'https://geocoding-api.open-meteo.com/v1/search';
 const WEATHER_API = 'https://api.open-meteo.com/v1/forecast';
@@ -31,6 +31,7 @@ interface OpenMeteoResponse {
 export interface WeatherResult {
     points: WeatherPoint[];
     tideStation: { name: string; distance: number; alertThreshold?: number; } | null;
+    tideHighLows?: TideEvent[]; // Added
     fetchedAt?: number;
 }
 
@@ -38,7 +39,7 @@ export const searchLocations = async (query: string): Promise<LocationResult[]> 
     if (query.length < 3) return [];
 
     try {
-        const url = `${GEOCODING_API}?name=${encodeURIComponent(query)}&count=5&language=en&format=json`;
+        const url = `${GEOCODING_API}?name=${encodeURIComponent(query)}&count=20&language=en&format=json`;
         const response = await fetch(url);
         const data = await response.json();
         return data.results || [];
@@ -54,7 +55,7 @@ export const searchLocations = async (query: string): Promise<LocationResult[]> 
 const CACHE_DURATION = 15 * 60 * 1000; // 15 Minutes
 
 export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: boolean = false): Promise<WeatherResult> => {
-    const cacheKey = `weather_cache_${lat.toFixed(4)}_${lon.toFixed(4)}`;
+    const cacheKey = `weather_cache_${lat.toFixed(4)}_${lon.toFixed(4)}_v2`;
 
     // 1. Try Cache
     try {
@@ -68,7 +69,11 @@ export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: b
                     ...p,
                     timestamp: new Date(p.timestamp)
                 }));
-                return { ...data, points: hydratedPoints, fetchedAt: timestamp };
+                const hydratedTides = data.tideHighLows ? data.tideHighLows.map((t: any) => ({
+                    ...t,
+                    timestamp: new Date(t.timestamp)
+                })) : [];
+                return { ...data, points: hydratedPoints, tideHighLows: hydratedTides, fetchedAt: timestamp };
             }
         }
     } catch (e) {
@@ -147,6 +152,7 @@ export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: b
         // NOAA Tide Integration
         let tideStation: { name: string; distance: number; alertThreshold?: number; } | null = null;
         let tidePredictions: any[] = [];
+        let tideEvents: TideEvent[] = []; // Added
         try {
             // Get top 3 nearest stations to handle cases where the closest one has no data (e.g. Santa Ana River)
             const stations = await findNearestStations(lat, lon, 3);
@@ -159,9 +165,10 @@ export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: b
                     const endDate = new Date();
                     endDate.setDate(endDate.getDate() + 10);
 
-                    // Parallel fetch predictions and datums
-                    const [preds, datums] = await Promise.all([
+                    // Parallel fetch predictions, high/lows, and datums
+                    const [preds, highLows, datums] = await Promise.all([
                         fetchTidePredictions(station.id, startDate, endDate),
+                        fetchTideHighLows(station.id, startDate, endDate),
                         fetchStationDatums(station.id)
                     ]);
 
@@ -169,6 +176,21 @@ export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: b
                         // Success!
                         tideStation = { name: station.name, distance: station.distance || 0 };
                         tidePredictions = preds;
+
+                        // Parse High/Lows here? OR just pass them raw?
+                        // Let's pass raw predictions and parse them into TideEvent[]
+                        tideEvents = highLows.map((hl: any) => ({
+                            timestamp: new Date(hl.t + 'Z'),
+                            height: Number(hl.v),
+                            type: hl.type as 'high' | 'low' // api returns 'H' or 'L' - wait, check noaa.ts response
+                        }));
+
+                        // NOAA API returns type: 'H' or 'L'
+                        tideEvents = highLows.map((hl: any) => ({
+                            timestamp: new Date(hl.t + 'Z'),
+                            height: Number(hl.v),
+                            type: hl.type === 'H' ? 'high' : 'low'
+                        }));
 
                         if (datums) {
                             const hatRelMllw = datums.HAT - datums.MLLW;
@@ -186,7 +208,7 @@ export const fetchWeatherData = async (lat: number, lon: number, forceRefresh: b
         }
 
         const points = normalizeData(weatherData, aqiData, marineData, tidePredictions);
-        const result = { points, tideStation };
+        const result = { points, tideStation, tideHighLows: tideEvents };
 
         // Save to Cache
         try {
@@ -258,8 +280,16 @@ const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, marin
         const totalPrecip = Number(hourly.precipitation?.[i] || 0);
 
         if (totalPrecip > 0) {
-            if (snow > 0) precipitationType = 'snow';
-            else if ((rain + showers) > 0) precipitationType = 'rain';
+            const hasLiquid = (rain + showers) > 0;
+            const hasFrozen = snow > 0;
+
+            if (hasFrozen && hasLiquid) {
+                precipitationType = 'sleet'; // Wintry Mix
+            } else if (hasFrozen) {
+                precipitationType = 'snow';
+            } else if (hasLiquid) {
+                precipitationType = 'rain';
+            }
         }
 
         // Marine Data (Optional / Nullable)
@@ -283,7 +313,7 @@ const normalizeData = (weather: OpenMeteoResponse, aqi: OpenMeteoResponse, marin
             temperature: Number(hourly.temperature_2m[i]),
             feelsLike: Number(hourly.apparent_temperature[i]),
             precipitationProbability: Number(hourly.precipitation_probability[i]) / 100, // API is 0-100, we want 0-1
-            precipitationAmount: precipitationType === 'snow' ? totalPrecip * 10 : totalPrecip, // Force standard 10:1 Snow Ratio (Liquid * 10)
+            precipitationAmount: precipitationType === 'snow' ? totalPrecip * 10 : totalPrecip, // Only multiply pure snow. Wintry mix remains dense liquid volume.
             precipitationType,
             windSpeed: Number(hourly.wind_speed_10m[i]),
             windDirection: Number(hourly.wind_direction_10m[i]),

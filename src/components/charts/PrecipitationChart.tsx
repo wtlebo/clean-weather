@@ -32,13 +32,15 @@ export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
 
         const blocks: { startIndex: number, endIndex: number, total: number, type: string }[] = [];
         let currentBlock: { startIndex: number, total: number, type: string } | null = null;
-        const MIN_HOURS = 5;
+        const MIN_HOURS = 4;
 
         for (let i = 0; i < data.length; i++) {
             const d = data[i];
             const hasPrecip = d.precipitationAmount > 0;
-            // Simplified type check matching previous logic
-            const currentType = d.precipitationType === 'snow' ? 'Snow' : 'Rain';
+            // Match strict types so sleet gets its own blocks
+            let currentType = 'rain';
+            if (d.precipitationType === 'snow') currentType = 'snow';
+            if (d.precipitationType === 'sleet') currentType = 'sleet';
 
             if (hasPrecip) {
                 if (!currentBlock) {
@@ -59,16 +61,34 @@ export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
                 }
             } else {
                 if (currentBlock) {
-                    // End block
-                    if ((i - currentBlock.startIndex) >= MIN_HOURS) {
-                        blocks.push({
-                            startIndex: currentBlock.startIndex,
-                            endIndex: i - 1,
-                            total: currentBlock.total,
-                            type: currentBlock.type
-                        });
+                    // Check if this is just a 1-hour gap
+                    // If next hour exists AND has precipitation, we BRIDGE the gap.
+                    // We simply do NOT close the block.
+                    // The next iteration will add to the block.
+                    const nextHour = data[i + 1];
+                    const nextHasPrecip = nextHour && nextHour.precipitationAmount > 0;
+
+                    if (nextHasPrecip) {
+                        // Bridge the gap: Do nothing, let the loop continue.
+                        // The 'endIndex' will naturally extend when the next hour is added.
+                        // The loop continues to i+1, where 'hasPrecip' is true, adding to the same block.
+                    } else {
+                        // End block
+                        // Note: If we just bridged a gap, the previous index (i-1) was the last valid precip.
+                        // However, strictly speaking, if we bridge a gap, the "storm" includes the lull.
+                        // But sticking to visualized blocks: usually we want the block to cover the lull.
+                        // If we reset 'currentBlock' here, the endIndex is i-1.
+
+                        if ((i - currentBlock.startIndex) >= MIN_HOURS) {
+                            blocks.push({
+                                startIndex: currentBlock.startIndex,
+                                endIndex: i - 1,
+                                total: currentBlock.total,
+                                type: currentBlock.type
+                            });
+                        }
+                        currentBlock = null;
                     }
-                    currentBlock = null;
                 }
             }
         }
@@ -115,7 +135,7 @@ export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
                     // No yAxisId needed, defaults to 0 (the main probability axis)
                     y1={0}
                     y2={0.25} // Restrict to bottom 25% as requested
-                    fill={block.type === 'snow' ? '#2196f3' : '#4caf50'}
+                    fill={block.type === 'snow' ? '#2196f3' : (block.type === 'sleet' ? 'url(#stripeSleet)' : '#4caf50')}
                     fillOpacity={0.2} // Slightly more visible since it's smaller
                     label={{
                         value: `${block.total.toFixed(units === 'metric' ? 0 : 2)} ${units === 'metric' ? 'mm' : 'in'}`,
@@ -164,7 +184,6 @@ export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
              /* Domain [0, 20]: 1 shows it at ~5% height */}
             <YAxis yAxisId="thunder" domain={[0, 20]} hide />
 
-            {/* Precipitation Probability Area (Bottom Layer) */}
             <Area
                 type="monotone"
                 dataKey="precipitationProbability"
@@ -177,7 +196,8 @@ export const PrecipitationChart: React.FC<PrecipitationChartProps> = ({
             {/* Amount Bar (Middle Layer, Default X Axis) */}
             {showAmount && (
                 <Bar
-                    dataKey="precipIntensity"
+                    dataKey="precipitationAmount"
+                    yAxisId="amount"
                     isAnimationActive={false}
                 >
                     {data.map((entry, index) => {
